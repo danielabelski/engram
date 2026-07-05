@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/banner.png" alt="Engram — learn anything. keep it." width="100%">
+</p>
+
 # Engram
 
 > A learning system for Claude Code that builds durable knowledge, not the feeling of it.
