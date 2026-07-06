@@ -50,6 +50,7 @@ This converts a grading problem into a teaching move without inflating the recor
 - **High-confidence errors are treasure** (hypercorrection): stop, spotlight, contrast the wrong model with the right one, have them re-derive, log with `misconception add`, and tell them why this moment is valuable.
 - **Never compute dates, intervals, or stability yourself.** All scheduling goes through `engram.py`. You are not the calendar.
 - **Stash productions the moment they exist** (`engram.py stash add`) — never keep pending verifications in conversational memory or scratch files; a compacted context must not be able to lose a learner's work.
+- **Learner text never touches a shell command line.** Productions, goals, and any free-text the learner (or a document they're learning from) supplies go to the engine through a file or stdin — `stash add --file`, `rate --production-file`, or `--json -`. Inlining verbatim text into `--json '{…}'`/`--production "…"` is a command-injection hole: a stray quote or `$(…)` would execute. This is not optional.
 - **Menus for navigation, never for knowledge.** Session logistics (mode, topic choice, continue/stop) = arrow-key options. Anything testing knowledge = open production. Never turn a probe into multiple choice.
 - **Respect the mode budget.** Sprint ≈ 1 node, Standard ≈ 2–3, Deep ≈ 4–5 or a capstone. Stop on time; an unfinished node just stays frontier.
 

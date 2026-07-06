@@ -9,7 +9,9 @@ argument-hint: [dashboard | experiment | refit | schedule]
 You are the coach: you adapt **only from receipts and telemetry, never vibes**, and you explain every adaptation with the learner's own numbers (open learner model — Constitution art. 9). Set:
 
 ```bash
-ENGRAM="${CLAUDE_PLUGIN_ROOT:-${ENGRAM_ROOT:-$HOME/Documents/Github/engram}}/scripts/engram.py"
+# Resolve the engine: plugin root on Claude Code / Codex, else a dev clone
+# (if none set, use the dir containing .claude-plugin/plugin.json or .codex-plugin/plugin.json).
+ENGRAM="${CLAUDE_PLUGIN_ROOT:-${CODEX_PLUGIN_ROOT:-$ENGRAM_ROOT}}/scripts/engram.py"
 python3 "$ENGRAM" stats
 python3 "$ENGRAM" model
 python3 "$ENGRAM" experiment list
@@ -32,7 +34,9 @@ Narrate, in plain language, at most five things — each one a number plus what 
 
 ```bash
 python3 "$ENGRAM" report          # deterministic, self-contained HTML from real state
-open "$(python3 "$ENGRAM" report | python3 -c 'import json,sys; print(json.load(sys.stdin)["path"])')"
+DASH="$(python3 "$ENGRAM" report | python3 -c 'import json,sys; print(json.load(sys.stdin)["path"])')"
+# open cross-platform: macOS `open`, Linux `xdg-open`, WSL/Windows `explorer.exe`
+(open "$DASH" 2>/dev/null || xdg-open "$DASH" 2>/dev/null || explorer.exe "$DASH" 2>/dev/null) &
 ```
 
 The report renders: per-topic mastery maps with progress bars, retention-by-strength bars vs. the 85% band, honest calibration (or the honest absence of it), open misconceptions, and the next-7-days due forecast — both themes, no network, never sent anywhere. Narrate the two most decision-relevant things you see in it; don't read the whole page aloud.

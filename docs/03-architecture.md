@@ -59,16 +59,18 @@ Global, project-independent, human-readable, schema-versioned: `~/.claude/learni
 ```json
 {
   "schema": 1,
-  "memory": { "fsrs_params": [/* ~20 floats, refit monthly from receipts */] },
-  "calibration": { "brier": 0.19, "bias": "+overconfident", "history": [] },
-  "challenge_band": { "target_success": 0.85, "hint_tolerance": 2 },
+  "memory": { "desired_retention": 0.90, "interval_multiplier": 1.0, "last_refit": null },
+  "challenge_band": { "target_success": 0.85, "hint_budget": 2 },
   "interests": ["distributed systems", "woodworking", "Vietnamese history"],
-  "goals": [{ "topic": "kalman-filters", "why": "drone project", "by": "2026-09" }],
-  "strategy_weights": { "derivation_first": 0.7, "example_first": 0.3 },
-  "rhythms": { "best_slot": "morning", "median_session_min": 22 },
+  "goals": ["ship the drone Kalman filter"],
+  "strategy_weights": { "derivation_first": 0.6, "example_first": 0.4 },
+  "settings": { "default_mode": "standard", "artifacts": "threshold-only", "ambient": "quiet" },
+  "rhythms": {},
   "accessibility": []
 }
 ```
+
+Calibration (Brier/bias) is **computed on demand** from receipts by `stats`, never stored in the model — so it can never drift from the evidence. The per-topic learning goal is stored on the graph (`graph.goal`); `goals` here is an optional flat list of standing aims (`--add-goal`). `refit` fits a single `interval_multiplier` from ≥50 review receipts (full per-parameter FSRS optimization is future work).
 
 **Graph node** (abridged):
 ```json
@@ -78,15 +80,14 @@ Global, project-independent, human-readable, schema-versioned: `~/.claude/learni
   "why_chain": ["conditional-probability-def", "product-rule"],
   "edges": { "requires": ["conditional-probability-def"], "contrasts_with": ["frequency-fallacy"], "analogous_to": ["code-review-priors"] },
   "arbitrary": false,
-  "threshold_concept": false,
+  "threshold": false,
   "state": "review",
-  "fsrs": { "stability": 14.2, "difficulty": 4.1, "due": "2026-07-11" },
-  "artifact": "artifacts/probability/bayes-theorem.html",
-  "receipts": ["r_0142", "r_0177"]
+  "fsrs": { "s": 14.2, "d": 4.1, "due": "2026-07-11", "last": "2026-06-27", "reps": 3, "lapses": 0 },
+  "artifact": "artifacts/probability/bayes-theorem.html"
 }
 ```
 
-`arbitrary: true` routes a node to mnemonic+SRS treatment (no derivation theater for irregular verbs). `threshold_concept: true` triggers explorable-by-default and extra relearning cycles.
+(FSRS fields are `s`/`d` — stability/difficulty. Receipts are **not** stored on the node; they live append-only in `receipts/<topic>.jsonl`, keyed by node, so evidence survives graph edits.) `arbitrary: true` routes a node to mnemonic+SRS treatment (no derivation theater for irregular verbs). `threshold: true` triggers explorable-by-default and extra relearning cycles.
 
 ## 3. The five loops
 
@@ -103,14 +104,14 @@ Global, project-independent, human-readable, schema-versioned: `~/.claude/learni
 
 **COACH** (skill: `/coach`, and weekly cron): reads telemetry, refits FSRS monthly, updates calibration, runs/settles n-of-1 experiments, regenerates the HTML dashboard (mastery map, retention curves, calibration plot, streak), and *explains its adaptations in plain language with the learner's own data as evidence*.
 
-**AMBIENT** (hooks): SessionStart re-anchors + one-line nudge ("7 items due, ~4 min — `/review` when ready"); SessionEnd flushes receipts. Optional opportunistic mode (off by default, the `learning-opportunities` pattern): when real work touches a tracked node, offer a 30-second retrieval — rate-limited to ≤1/session, silent after any decline that session.
+**AMBIENT** (hooks): SessionStart re-anchors + one-line nudge ("7 items due, ~4 min — `/review` when ready"). There is no SessionEnd hook — receipts are written by `engram.py` at the moment of grading, so nothing needs flushing at session end (one SessionStart hook is the entire ambient surface). Optional opportunistic mode (off by default, the `learning-opportunities` pattern): when real work touches a tracked node, offer a 30-second retrieval — rate-limited to ≤1/session, silent after any decline that session.
 
 ## 4. Agent separation of powers
 
 The parent plugin separates `software-engineer` from `code-reviewer` because self-assessment is corrupt. Engram's version is stricter, because the failure mode is subtler — sycophancy dressed as encouragement:
 
-- **tutor** teaches but never grades; it cannot write receipts or advance node state.
-- **assessor** grades against `_shared/rubrics/` from a fresh context: it sees the item, the rubric, and the learner's production — *not* the tutoring dialogue, so the tutor's enthusiasm can't leak into the grade. Verdicts: `recalled | partial | lapsed`, misconception tags, rubric citations. It is prompted to be a skeptic ("find what's missing before what's present") and calibrated by spot-audit ("would an exam grader accept this?").
+- **tutor** teaches. During `/learn` encoding — the highest-stakes moment, first exposure — it never grades: it *stashes* the production and the blind **assessor** grades it (separation of powers). During `/review` and the `/learn` pretest, the tutor self-grades against the node's own rubric and writes the receipt directly (a two-minute review can't afford a subagent round-trip), and `/review` escalates to the assessor for an **audit** when a session is large, disputed, or partial-heavy. So the invariant is not "the tutor never writes receipts" — it's "**first-exposure mastery is graded blind, and self-grading is spot-audited**."
+- **assessor** grades against the node's **per-node `rubric`** (carried in the graph, passed in the stash entry) from a fresh context: it sees the item, the rubric, and the learner's production — *not* the tutoring dialogue, so the tutor's enthusiasm can't leak into the grade. Verdicts: `recalled | partial | lapsed`, misconception tags, rubric citations. It is prompted to be a skeptic ("find what's missing before what's present") and calibrated by spot-audit ("would an exam grader accept this?").
 - **coach** adapts but only from receipts and telemetry, never from vibes; every adaptation it makes is written to the open learner model with its evidence.
 - **curriculum-architect** and **artifact-smith** create but cannot assess.
 

@@ -9,8 +9,11 @@ argument-hint: [quick | <topic>]
 Read `skills/_shared/dialogue-grammar.md` (hard rules, confidence integrity, park-and-resume, and the rating map apply here verbatim). Set:
 
 ```bash
-ENGRAM="${CLAUDE_PLUGIN_ROOT:-${ENGRAM_ROOT:-$HOME/Documents/Github/engram}}/scripts/engram.py"
+# Resolve the engine: plugin root on Claude Code / Codex, else a dev clone.
+ENGRAM="${CLAUDE_PLUGIN_ROOT:-${CODEX_PLUGIN_ROOT:-$ENGRAM_ROOT}}/scripts/engram.py"
 ```
+
+If none are set, resolve the plugin root as the directory containing `.claude-plugin/plugin.json` (or `.codex-plugin/plugin.json`). **Never inline a learner's answer into a shell command** — pass productions via `--production-file` (or `--production-file -` on stdin); a stray quote or `$(…)` in what they typed would otherwise execute.
 
 ## 1 · Load the queue
 
@@ -28,11 +31,11 @@ The `due` payload gives you `probe`, `claim` (canonical answer), and `rubric`. S
 1. Show the **probe only**. Free recall — no options, no hints in the prompt, no "remember when we...". Ask for **confidence in the same breath**: *"answer + gut 0–100."*
 2. They produce. (Silence is fine; "no idea" is an answer — treat as lapse, warmly.) No number after one casual retry → confidence is null, never estimated.
 3. Reveal: canonical `claim` + a one-line gap analysis against `rubric` — specific, about the work. If they gave consequence-only, run the terse-production move (one "and the mechanism?" — grammar file) *before* the reveal.
-4. Map to a rating with the shared table (round down when torn) and commit **immediately**:
+4. Map to a rating with the shared table (round down when torn) and commit **immediately**. Pass the learner's answer via a file (write it, then reference it) so their text never lands on the command line:
 
 ```bash
 python3 "$ENGRAM" rate --topic <t> --node <n> --rating <r> --confidence <c-or-omit> \
-  --grade <g> --production "<their answer, trimmed>" --kind review --source self
+  --grade <g> --production-file <tmp-answer.txt> --kind review --source self
 ```
 
 Relay the returned due date in passing, not ceremonially ("back in 12 days").

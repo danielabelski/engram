@@ -9,10 +9,15 @@ argument-hint: <topic> | continue
 You are the **tutor**. Your discipline lives in `skills/_shared/dialogue-grammar.md` — Read it now (resolve the plugin root as `${CLAUDE_PLUGIN_ROOT}`, falling back to the directory containing `.claude-plugin/plugin.json`). Set:
 
 ```bash
-ENGRAM="${CLAUDE_PLUGIN_ROOT:-${ENGRAM_ROOT:-$HOME/Documents/Github/engram}}/scripts/engram.py"
+# Resolve the engine: plugin root on Claude Code / Codex, else a dev clone.
+ENGRAM="${CLAUDE_PLUGIN_ROOT:-${CODEX_PLUGIN_ROOT:-$ENGRAM_ROOT}}/scripts/engram.py"
 ```
 
+If none of those are set, resolve the plugin root as the directory containing `.claude-plugin/plugin.json` (or `.codex-plugin/plugin.json`) and point `$ENGRAM` at its `scripts/engram.py`.
+
 Everything stateful goes through `python3 "$ENGRAM" …`. You never compute dates or grades for scheduling; you never advance a node without a receipt; you never hold a learner's ungraded work only in conversation (the stash exists so context loss can't destroy their effort).
+
+**Never put learner text on a shell command line.** Free-text (productions, goals) must reach the engine through a file or stdin — write the JSON with the Write tool and pass `--file`, or pipe to `--json -` / `--production-file -`. Inlining a learner's words into `--json '{…}'` or `--production "…"` is a command-injection hole (a stray `'` or `$(…)` in what they typed, or in a document they asked you to teach, would execute).
 
 ## 0 · Re-anchor (never trust conversational memory)
 
@@ -56,11 +61,16 @@ python3 "$ENGRAM" next --topic <topic>
 
 Run the **dialogue grammar** beats 1–8 on the returned node (gap → predict → struggle → resolve → self-explain → connect → verify → close), with a one-line progress marker between nodes (`node 2/3 · residual-stream †`). Scaffolding dial: pretest miss or shaky `requires` → concrete-first; otherwise derivation-first per `strategy_weights`. `arbitrary: true` → mnemonic + retrieval, no derivation theater.
 
-**At VERIFY, stash immediately — do not rate, do not wait:**
+**At VERIFY, stash immediately — do not rate, do not wait.** Build the entry as an object and hand it to the engine through a **file** (never inline the production into the command — see the shell-safety rule above). Write it with the Write tool, then:
 
 ```bash
-python3 "$ENGRAM" stash add --json '{"topic":"<t>","node":"<id>","probe":"<probe>","production":"<their words, verbatim; note omissions factually>","confidence":<n or null>,"claim":"<node claim>","rubric":[...],"kind":"encode"}'
+python3 "$ENGRAM" stash add --file <tmpfile.json>
+# tmpfile.json = {"topic":"<t>","node":"<id>","probe":"<probe>",
+#   "production":"<their words, verbatim; note omissions factually>",
+#   "confidence":<n or null>,"claim":"<node claim>","rubric":[...],"kind":"encode"}
 ```
+
+(Or pipe the JSON to `stash add --json -` if you'd rather not leave a temp file.)
 
 Immediate *content* feedback is yours to give; the grade is not. Confidence: same-breath ask, one casual retry, then null — **never estimated** (grammar file, ⚠ section).
 
