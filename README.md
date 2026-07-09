@@ -3,9 +3,9 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-0.4.0-6D4AA8.svg" alt="Version 0.4.0">
+  <img src="https://img.shields.io/badge/version-0.4.1-6D4AA8.svg" alt="Version 0.4.1">
   <img src="https://img.shields.io/badge/license-MIT-yellow.svg" alt="MIT License">
-  <img src="https://img.shields.io/badge/selftest-68%2F68-3E7D5A.svg" alt="68/68 checks">
+  <img src="https://img.shields.io/badge/selftest-70%2F70-3E7D5A.svg" alt="70/70 checks">
   <img src="https://img.shields.io/badge/scheduler-FSRS--4.5-6D4AA8.svg" alt="FSRS-4.5">
   <img src="https://img.shields.io/badge/data-100%25%20local-3E7D5A.svg" alt="100% local">
 </p>
@@ -200,6 +200,13 @@ Yes — the engine doesn't care. History, music theory, statistics, anatomy (it 
 **What if I just want the answer?**
 Say "just tell me" — it complies immediately, no lecture. It also quietly schedules that concept for earlier review, because told-not-derived decays faster. Your call, honestly priced.
 
+**I have ADHD / I keep getting bored and quitting — is there a mode for that?**
+Yes: an opt-in **Focus profile**. It doesn't add a game — no XP, streaks, or badges (the evidence says those backfire on motivated adults; see [docs/05](docs/05-affective-layers.md)). It turns *up* dials Engram already has: one node per session so you can't drift, your **real** memory-growth surfaced every review (*"this now lasts ~4× longer"* — a true stability number, not points), and amnesty whenever you return to a backlog instead of a guilt pile. Two ways to switch it, whichever you like:
+- **Just say so** in `/learn` or `/coach` — *"I have ADHD, turn on focus mode."*
+- **Run it** yourself: `python3 scripts/engram.py focus on` (or `off`, or `status`).
+
+It's stored as a declared need in your learner model, honored across all three commands — not a "learning style" (Engram rejects those). Works for anyone who wants it; ADHD just gets the intensity. Full rationale and evidence: [docs/05-affective-layers.md](docs/05-affective-layers.md).
+
 **Where's my data?**
 `~/.claude/learning/` — learner model, concept graphs, grade receipts, misconception log, artifacts. Human-readable JSON. Your learning **state never leaves your machine**: the engine (`engram.py`) is stdlib-only with no network code, and the dashboard is a local file. The one exception is the curriculum architect, which uses web search on the *topic and goal you give it* when building a new map — so keep secrets out of the goal line, or ask for an offline map. (Override the location with `ENGRAM_HOME`.)
 
@@ -221,10 +228,11 @@ The model never does calendar math; this does:
 | `rate` / `receipt --file F` | apply one rating · apply assessor receipt batch |
 | `stash add\|list\|count\|clear` | crash-safe queue of answers awaiting grading |
 | `model` / `misconception` / `experiment` | open learner model · error catalog · n-of-1 trials |
+| `focus on\|off\|status` | toggle the ADHD Focus profile (Sprint default, growth every review, always-on amnesty) |
 | `stats` / `report` | telemetry JSON · self-contained HTML dashboard |
 | `refit` | fit review intervals to your measured recall (guarded, ≥50 reviews) |
 | `session-start` / `log-session` | ambient nudge (hook) · session telemetry |
-| `selftest` | 68 checks over the FSRS math, state machine, and every hardened boundary |
+| `selftest` | 70 checks over the FSRS math, state machine, and every hardened boundary |
 
 </details>
 

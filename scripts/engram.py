@@ -735,6 +735,8 @@ def cmd_model(args):
                     continue
             if raw in ("true", "false"):
                 val = (raw == "true")
+            if raw.lower() in ("null", "none"):
+                val = None   # clear a nullable setting (e.g. settings.profile=null)
             parts = key.split(".")
             if parts[0] not in m:
                 die("unknown model key: %s" % parts[0])
@@ -769,6 +771,21 @@ def cmd_model(args):
     if changed:
         write_json(p("learner-model.json"), m)
     emit(m)
+
+def cmd_focus(args):
+    """Toggle the ADHD Focus profile (`settings.profile`) — a discoverable wrapper
+    over `model --set settings.profile=...`. The skills read the flag and turn UP
+    dials they already honor (Sprint default, competence growth surfaced every
+    review, always-on amnesty). No new pedagogy, no gamification; a declared need,
+    honored. See docs/05-affective-layers.md, "The ADHD question"."""
+    m = load_model()
+    if args.action in ("on", "off"):
+        m["settings"]["profile"] = "adhd" if args.action == "on" else None
+        write_json(p("learner-model.json"), m)
+    prof = m["settings"].get("profile")
+    emit({"profile": prof, "focus_active": prof == "adhd",
+          "note": ("Focus on: Sprint default, growth surfaced every review, always-on amnesty."
+                   if prof == "adhd" else "Focus off: standard defaults.")})
 
 def cmd_misconception(args):
     path = p("misconceptions.json")
@@ -1387,6 +1404,20 @@ def cmd_selftest(_args):
               and healed["settings"]["profile"] is None
               and healed["settings"]["default_mode"] == "sprint")
 
+        # `model --set ...=null` clears to real None, not the string "null"
+        _capture(cmd_model, _ns(set=["settings.profile=null"]))
+        check("model --set =null clears to None (not the string 'null')",
+              read_json(os.path.join(tmp, "learner-model.json"))["settings"]["profile"] is None)
+
+        # the `focus` command toggles the ADHD profile on and cleanly back off
+        on = _capture_json(cmd_focus, _ns(action="on"))
+        prof_on = read_json(os.path.join(tmp, "learner-model.json"))["settings"]["profile"]
+        off = _capture_json(cmd_focus, _ns(action="off"))
+        prof_off = read_json(os.path.join(tmp, "learner-model.json"))["settings"]["profile"]
+        check("focus on/off toggles profile and reports state",
+              prof_on == "adhd" and on["focus_active"] is True
+              and prof_off is None and off["focus_active"] is False)
+
         # receipt ids unique within a fast batch
         batch = [{"topic": "t", "node": "a", "rating": "good"},
                  {"topic": "t", "node": "b", "rating": "good"}]
@@ -1781,6 +1812,9 @@ def main():
     sp.add_argument("--add-interest", action="append")
     sp.add_argument("--add-goal", action="append")
 
+    sp = sub.add_parser("focus")
+    sp.add_argument("action", choices=("on", "off", "status"))
+
     sp = sub.add_parser("misconception")
     sp.add_argument("action", choices=("add", "list", "resolve"))
     sp.add_argument("--topic"); sp.add_argument("--node")
@@ -1808,6 +1842,7 @@ def main():
         "topics": cmd_topics, "add-topic": cmd_add_topic, "next": cmd_next,
         "topic-status": cmd_topic_status, "due": cmd_due, "rate": cmd_rate,
         "receipt": cmd_receipt, "stash": cmd_stash, "model": cmd_model,
+        "focus": cmd_focus,
         "misconception": cmd_misconception, "experiment": cmd_experiment,
         "log-session": cmd_log_session, "stats": cmd_stats,
         "refit": cmd_refit, "doctor": cmd_doctor, "report": cmd_report,

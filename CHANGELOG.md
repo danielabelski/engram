@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.4.1 — 2026-07-09 · discoverable Focus mode + release hygiene
+
+Follow-up to 0.4.0: the ADHD Focus profile shipped but was undiscoverable (no README,
+no clean command), and one toggle path was buggy.
+
+### Engine
+- **`focus on|off|status` command** — a first-class, discoverable wrapper over
+  `model --set settings.profile=...`. Turning it on flips the ADHD profile (Sprint
+  default, competence growth surfaced every review, always-on amnesty); `status` reports
+  without changing anything.
+- **Bug fix: `model --set <key>=null` now clears to real `None`**, not the string
+  `"null"` — so turning Focus (or any nullable setting) *off* actually works. `null`/`none`
+  (any case) are recognized alongside the existing int/float/bool casts.
+- Selftests 68 -> **70** (the `focus` on/off round-trip; the `=null` clear).
+
+### Docs
+- **README now documents Focus mode** (FAQ entry + CLI table row) with both activation
+  paths: say "I have ADHD, turn on focus mode" in `/learn`/`/coach`, or run `focus on`.
+  This omission is what prompted the fix — a shipped feature nobody can find isn't shipped.
+- **`RELEASE_PROTOCOL.md`** added at root: the repeatable release checklist (version-bump
+  locations, selftest gate, a live dogfood test, and the merge → tag → `gh release` steps),
+  written after v0.4.0 shipped with its files bumped but no git tag / release cut.
+- `INSTALL-CODEX.md` selftest count corrected (68 -> 70).
+
 ## 0.4.0 — 2026-07-09 · the affective layers (motivation + wisdom)
 
 Two new layers around the unchanged engine, for the part the first four pillars
