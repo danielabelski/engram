@@ -32,7 +32,7 @@ under a new adversarially-verified evidence base.
   **feature-space navigator** (several sliders, each a dimension; one holistic output
   morphing live — the founder's draggable-face moment, now in the vocabulary).
 
-### Engine (`scripts/engram.py`) — selftest 70 → 79
+### Engine (`scripts/engram.py`) — selftest 70 → 85
 - **`artifact set|clear|list`** — explorable registration is now engine-owned like
   `fsrs`/`state`: the file must exist, paths under the state dir are stored
   home-relative, payload-supplied `artifact` values are stripped at `add-topic`, and
@@ -80,10 +80,32 @@ under a new adversarially-verified evidence base.
 - artifact-smith (both platforms): consumes `viz.kind`/`viz.hook`, applies the novice
   worked-drive gate, registers after writing, echoes the registration JSON in its report.
 
+### Hardening (adversarial review before release — 10 confirmed findings, all fixed)
+- **State mutex.** Every state-mutating command now serializes on an advisory
+  lockfile (`.engram.lock`; stale locks broken after 60s). The new background
+  artifact-smith registering while the tutor rates on the same topic was a
+  last-writer-wins race on the whole-file graph write — it could silently revert
+  a just-graded node's schedule or drop a fresh registration.
+- **The `valid_artifact` gate.** Receipt stamping, the due-payload flag, and
+  `--replace` carry-forward now all require a non-empty string whose file exists.
+  v0.4's `add-topic` silently kept payload-supplied artifact strings; without the
+  gate those phantoms would stamp append-only receipts into the wrong modality arm
+  forever. Registration also now survives a corrupt `fsrs` on restructure (it was
+  being destroyed), and phantoms die at `--replace` instead of living on.
+- **doctor** reports all artifact problems (unregistered, dangling, garbage-typed)
+  as *notes* with pasteable shell-quoted fix commands — an upgrade must not flip
+  doctor red for v0.4's own leniency.
+- **Input hardening:** `artifact list` degrades gracefully on nodeless graphs and
+  lists registrations on nodes outside `order`; `visuals status` reports a
+  hand-edited non-string setting instead of crashing; `add-topic` rejects a
+  non-object node with a clean error.
+- README's `visuals` CLI row described the levels in swapped order (taught
+  `eager` = default) — fixed. Selftest 79 → 85 across the fixes.
+
 ### Packaging
 - Version 0.5.0 everywhere (plugin.json ×2, badges); README: science point 6, visual
   FAQ entry, CLI table rows for `visuals`/`artifact`, docs table row for docs/06,
-  Discord community badge (discord.gg/temm1e); INSTALL-CODEX selftest count 79/79.
+  Discord community badge (discord.gg/temm1e); INSTALL-CODEX selftest count 85/85.
 
 Existing users: `claude plugin marketplace update engram && claude plugin update
 engram@engram`, then restart Claude Code. A v0.4 learner model self-heals; nothing
