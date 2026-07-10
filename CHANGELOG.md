@@ -1,5 +1,52 @@
 # Changelog
 
+## 0.5.1 — 2026-07-10 · the modality confound, said out loud
+
+Found by doing what the release protocol asks and 0.5.0 skipped: a real `/learn`
+session, driven end to end with the actual agents. The pipeline held up — the
+curriculum architect tagged every node's visual affordance, the artifact-smith built a
+Contract-v2 explorable for the threshold node and registered it unprompted, the blind
+assessor rounded a shaky production down to `partial`, and the receipt carried its
+medium stamp. But the session exposed something no code review could: **the medium
+comparison in `stats.modality` is confounded by construction.**
+
+Explorables are routed to threshold and high-affordance concepts *on purpose* — that
+is the whole content rule. So the dialogue arm fills with the remaining material, and
+the two arms never differ only in medium. Under `threshold-only` the explorable arm is
+exactly the topic's hardest, portal concepts. A lower explorable-arm recall may mean
+nothing more than that explorables were spent on the hard things.
+
+The number was already labeled suggestive. That was not enough: a coach narrating from
+the JSON could report it as a clean result. So the caveat now travels *with* the data.
+
+### Engine (selftest 85 → 86)
+- `stats.modality` gains a **`caveat`** field, present in every read state
+  (`insufficient-data` included), stating that the arms are not randomized and the
+  comparison carries medium *and* material. Covered by a new selftest — a narrator
+  reading only this JSON cannot see the verdict without seeing why it is soft.
+- The dashboard's "Encoding medium" section prints the caveat beside the bars, so a
+  learner reading the HTML alone gets the same warning.
+
+### Behavior
+- `/coach` **must voice** the caveat whenever it reports the medium yield, and is
+  explicitly forbidden from presenting the number as proof the medium works or fails.
+  Sample narration updated to model the honest version.
+
+### Theory
+- `docs/06-visual-encoding.md` open question 2 now documents the confound in full,
+  including why it *cannot* be fixed by randomizing arms without violating the content
+  rule the document itself establishes — and names the honest form of the question
+  (a randomized `experiment` within one affordance class; future work).
+
+### Examples
+- `examples/pid-error-feedback-loop.html` — the explorable the artifact-smith actually
+  generated in that session (drone altitude hold; a wind gust drives the error, the
+  throttle answers), now hosted next to the hand-authored reference implementation.
+  Its header says which is which, because "the kind of thing Engram builds" and "the
+  thing Engram built" are not the same claim.
+
+No schema change, no default change, nothing to migrate.
+
 ## 0.5.0 — 2026-07-10 · the visual-encoding layer — explorables audited, adaptive, and measured
 
 The explorable engine grows up. Until now, interactive explorables fired only on

@@ -1106,6 +1106,14 @@ def compute_momentum(receipts):
 
 MODALITY_MIN_N = 6   # same floor as the n-of-1 experiment convention (min_per_arm)
 
+# Shipped inside the stats block so the narrator cannot forget it (the coach reads
+# this JSON, not the docs). Surfaced live in a dogfood session: explorables are
+# routed to threshold / high-viz-affordance nodes by design, so the two arms never
+# differ *only* in medium — they differ in the material too. See docs/06 §Open.
+MODALITY_CAVEAT = ("arms are not randomized: explorables go to threshold and "
+                   "high-affordance concepts, so this compares medium AND material. "
+                   "Suggestive personal telemetry, never proof — say so when reporting it.")
+
 def compute_modality(receipts):
     """Per-learner medium yield (Article 7: adapt on evidence, never taxonomy).
     Compares first-review recall between nodes that HAD a registered explorable at
@@ -1114,7 +1122,8 @@ def compute_modality(receipts):
     honored as a preference, but retention data arbitrates (docs/01 §Rejections;
     docs/06-visual-encoding.md). One datum per node (its FIRST review), because later
     reviews confound medium with maturity. Deliberately suggestive, never 'proven':
-    the read is guarded by the same per-arm floor as n-of-1 experiments."""
+    the read is guarded by the same per-arm floor as n-of-1 experiments, and it ships
+    its own confound caveat (MODALITY_CAVEAT) — the assignment is not randomized."""
     first = {}
     for r in receipts:
         if r.get("kind") != "review" or not r.get("rating"):
@@ -1142,6 +1151,7 @@ def compute_modality(receipts):
     else:
         out["read"] = "insufficient-data"
     out["min_n"] = MODALITY_MIN_N
+    out["caveat"] = MODALITY_CAVEAT
     return out
 
 def compute_stats():
@@ -1501,9 +1511,9 @@ def cmd_report(args):
                             int(v["first_review_recall"] * 100), v["n"]))
         parts.append("<p class='note'>%s — your own receipts comparing how concepts "
                      "encoded with an interactive explorable hold up against dialogue-only "
-                     "ones, at each node's first review. Suggestive, not proven (n is small); "
+                     "ones, at each node's first review. <b>Read it carefully:</b> %s "
                      "<span class='mono'>visuals eager|threshold|off</span> is the dial.</p>"
-                     % escape(mod["read"]))
+                     % (escape(mod["read"]), escape(mod["caveat"])))
     elif mod["explorable"]["n"] == 0:
         parts.append("<p class='note'>No explorable-encoded reviews yet — once explorables "
                      "enter the mix, their retention is compared against dialogue-only "
@@ -2060,6 +2070,12 @@ def cmd_selftest(_args):
     check("stats exposes the modality block",
           fresh(lambda h: _capture_json(cmd_stats, _ns())["modality"]["read"]
                 == "insufficient-data"))
+    # the confound ships WITH the number, in every read state — a narrator reading
+    # only this JSON cannot report the verdict without also seeing why it's soft
+    check("modality carries its confound caveat in every read state",
+          all("not randomized" in m["caveat"] for m in (mod, mod_thin))
+          and "not randomized" in fresh(
+              lambda h: _capture_json(cmd_stats, _ns())["modality"])["caveat"])
 
     # -- visuals dial round-trips and reports --
     def _visuals(h):
