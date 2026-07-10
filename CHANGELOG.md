@@ -1,5 +1,96 @@
 # Changelog
 
+## 0.5.0 — 2026-07-10 · the visual-encoding layer — explorables audited, adaptive, and measured
+
+The explorable engine grows up. Until now, interactive explorables fired only on
+threshold nodes — which conflated *importance* with *visualizability* — the graph never
+recorded which artifacts existed (the smith wrote files nothing tracked), and nothing
+measured whether the medium actually works for a given learner. v0.5 fixes all three,
+under a new adversarially-verified evidence base.
+
+### Theory
+- **New: `docs/06-visual-encoding.md`** — the visual-encoding audit, built the same way
+  as docs/05: a fan-out research pass (27 primary sources, 135 claims extracted, the 25
+  load-bearing ones each verified by three refute-first voters; 23 survived, 2 killed).
+  Adds **Pillar 15 — the guided manipulable**: manipulable models carry the largest
+  verified interactivity effect (simulations g+ = 0.62), but *guidance inside the
+  artifact is the active ingredient* (scaffolded versions of the same simulation
+  g+ = 0.60; learner control per se g = 0.05 ≈ nothing; unassisted discovery loses,
+  d = −0.38), the payoff concentrates where the dynamics ARE the content
+  (representational d = 0.40 vs decorative ≈ −0.05), and expertise reversal is a
+  confirmed disordinal crossover (+0.505 novices / −0.428 knowledgeable, Tetzlaff 2025).
+  Two refuted claims are recorded as do-not-build-on; four areas that produced no
+  verifiable evidence (visual retrieval formats, n-of-1 medium methodology,
+  preference-engagement value, LLM-artifact efficacy) are stated as **open questions**
+  with deliberately conservative design stances.
+- **Explorable Contract v2** (same seven clauses, sharpened by the audit): the
+  manipulable is now explicitly *guided* — predict → act → **explain** micro-cycle
+  (self-explanation g = 0.46), content-relevant degrees of freedom only, a **worked
+  drive** gates the model at novice scaffold (worked examples g = 0.48; "provide
+  assistance when in doubt"); no text over motion; learner advances *between* segments,
+  dynamics run themselves *within* one; registration is part of clause 7. New widget:
+  **feature-space navigator** (several sliders, each a dimension; one holistic output
+  morphing live — the founder's draggable-face moment, now in the vocabulary).
+
+### Engine (`scripts/engram.py`) — selftest 70 → 79
+- **`artifact set|clear|list`** — explorable registration is now engine-owned like
+  `fsrs`/`state`: the file must exist, paths under the state dir are stored
+  home-relative, payload-supplied `artifact` values are stripped at `add-topic`, and
+  registrations survive `--replace` alongside the schedule. (Fixes a real gap: built
+  artifacts were invisible to the graph, so regeneration tracking and Contract clause 7
+  had no data trail.)
+- **Medium-stamped receipts** — every `rate`/`receipt` stamps whether the node had a
+  registered explorable *at grading time*, so evidence of the encoding medium can never
+  be rewritten retroactively.
+- **`stats.modality`** — the honest per-learner answer to "do explorables work for ME":
+  first-review recall of explorable-encoded vs dialogue-only nodes, one datum per node,
+  ≥6 per arm (the n-of-1 experiment floor) before any verdict; reads
+  `explorable-encoded ahead / dialogue-encoded ahead / indistinguishable /
+  insufficient-data`. Also rendered as an "Encoding medium" dashboard section. This is
+  the instrument the Phase-2 exit criterion (docs/04) always called for.
+- **`visuals eager|threshold|off|status`** — the discoverable dial over
+  `settings.artifacts`, sibling to `focus`. `eager` extends explorables beyond threshold
+  nodes to any node whose *content* declares high visual affordance. Default remains
+  `threshold-only`: existing users see zero behavior change.
+- **`viz` node field** — the curriculum architect now declares each node's visual
+  affordance (`affordance high|some|none`, `kind`, one-line manipulation `hook`);
+  the engine stores it opaquely (object kept, garbage dropped with a warning).
+- `due` payload now carries an `artifact` presence flag (review's re-encode path reads
+  it); `doctor` notes unregistered artifact files with the exact fix command (non-failing)
+  and fails dangling registrations.
+
+### Behavior (skills + agents; defaults unchanged)
+- `/learn`: explorables are now **content-triggered and learner-dialed** — threshold
+  nodes as before; at `visuals eager`, also `viz.affordance: high` nodes; an explicit
+  "make it visual" builds for any node at any level (autonomy override, same shape as
+  "just tell me"). One **ask-once-per-topic** offer when a high-affordance node meets the
+  default setting (arrow-key; "always" sets `visuals eager` with consent echoed back).
+  The smith now runs **in the background** while the dialogue beats continue, registers
+  what it builds, and hand-off is an arrow-key choice (open it now / homework — homework
+  is the Sprint default; the two-minute floor outranks the medium).
+- `/review`: the second-lapse re-encode move now knows whether an explorable already
+  exists (regenerate it differently) or not (offer to build one) — background spawn,
+  hand-off at the close, never mid-queue.
+- `/coach`: narrates the medium comparison when it has a verdict, with its n and the
+  explicit honesty that n-of-1 medium measurement is suggestive telemetry, not settled
+  methodology; offers the matching `visuals` move arrow-key style, applied only on yes.
+- curriculum-architect (both platforms): declares `viz` per node with an evidence leash —
+  a false `high` is worse than a false `none`, because decorative interactivity reverses
+  the effect (≈ −0.05).
+- artifact-smith (both platforms): consumes `viz.kind`/`viz.hook`, applies the novice
+  worked-drive gate, registers after writing, echoes the registration JSON in its report.
+
+### Packaging
+- Version 0.5.0 everywhere (plugin.json ×2, badges); README: science point 6, visual
+  FAQ entry, CLI table rows for `visuals`/`artifact`, docs table row for docs/06,
+  Discord community badge (discord.gg/temm1e); INSTALL-CODEX selftest count 79/79.
+
+Existing users: `claude plugin marketplace update engram && claude plugin update
+engram@engram`, then restart Claude Code. A v0.4 learner model self-heals; nothing
+about your schedule, receipts, or defaults changes until you touch the `visuals` dial.
+Optional one-time heal: `doctor` will point out any explorable built before 0.5 so you
+can register it (`artifact set …`) and start counting it in the medium comparison.
+
 ## 0.4.4 — 2026-07-09 · fix the confidence picker not firing (contradiction in the oath)
 
 0.4.3 added the imperative picker instruction but a stale line survived in the most-obeyed

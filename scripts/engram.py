@@ -433,18 +433,31 @@ def cmd_add_topic(args):
         node.setdefault("threshold", False)
         node.setdefault("rubric", [])
         node.setdefault("transfer_probe", None)
-        node.setdefault("artifact", None)
+        # `viz` is the architect's content-modality hint (affordance/kind/hook) —
+        # Willingham's rule made data: the CONTENT declares whether it rewards a
+        # manipulable model; the learner's settings decide whether to act on it.
+        # The engine stores it opaquely; skills own its semantics.
+        if node.get("viz") is not None and not isinstance(node.get("viz"), dict):
+            warnings.append("%s: viz hint is not an object — dropped" % nid)
+            node["viz"] = None
+        node.setdefault("viz", None)
         # The engine OWNS scheduling state — never trust payload-supplied state/fsrs
         # (mastery advances only through receipts; Article 10). On --replace, carry
         # the existing schedule forward for surviving node ids so restructuring a
-        # topic is not silent data loss.
+        # topic is not silent data loss. `artifact` is engine-owned the same way:
+        # only `artifact set` (which validates the file exists) may record one, and
+        # a registration survives restructuring alongside the schedule.
+        node.pop("artifact", None)
         prev = old_nodes.get(nid)
         if isinstance(prev, dict) and isinstance(prev.get("fsrs"), dict):
             node["fsrs"] = prev["fsrs"]
             node["state"] = prev.get("state", "new")
+            pa = prev.get("artifact")
+            node["artifact"] = pa if isinstance(pa, str) and pa else None
         else:
             node["fsrs"] = _fresh_fsrs()
             node["state"] = "new"
+            node["artifact"] = None
         if node["state"] not in NODE_STATES:
             node["state"] = "new"
         for etype, targets in node.get("edges", {}).items():
@@ -546,6 +559,9 @@ def due_items(topic_filter=None, limit=None, horizon_days=0):
                     "claim": node.get("claim"), "rubric": node.get("rubric", []),
                     "threshold": node.get("threshold", False),
                     "arbitrary": node.get("arbitrary", False),
+                    # lets /review's re-encode path know an explorable already exists
+                    # (regenerate, don't duplicate) without loading the graph
+                    "artifact": bool(node.get("artifact")),
                     "due": fsrs.get("due"),
                     "overdue_days": (today() - due_d).days,
                     "s": fsrs.get("s"), "reps": fsrs.get("reps", 0),
@@ -647,6 +663,11 @@ def apply_item(item, kind):
         node["state"] = "review"
     # Evidence before state (Article 10): write the receipt first, so a crash can
     # only ever cost a harmless re-review — never advance mastery without a receipt.
+    # Stamp the medium at grading time (had this node an explorable *now*?) so the
+    # modality comparison in `stats` reads the receipt, never the current graph —
+    # an artifact added later must not rewrite which arm old evidence belonged to.
+    if isinstance(node.get("artifact"), str) and node["artifact"]:
+        extra = {**extra, "artifact": True}
     receipt = make_receipt(item, {**extra, "due_next": node["fsrs"]["due"]}, kind)
     append_jsonl(p("receipts", item["topic"] + ".jsonl"), receipt)
     save_graph(g)
@@ -786,6 +807,71 @@ def cmd_focus(args):
     emit({"profile": prof, "focus_active": prof == "adhd",
           "note": ("Focus on: Sprint default, growth surfaced every review, always-on amnesty."
                    if prof == "adhd" else "Focus off: standard defaults.")})
+
+VISUALS_LEVELS = {"eager": "eager", "threshold": "threshold-only", "off": "off"}
+VISUALS_NOTES = {
+    "eager": ("Eager: explorables for threshold nodes AND any node whose content has real "
+              "visual affordance (the architect's viz hint). The medium's yield for you is "
+              "measured (stats.modality) — evidence can talk you back down."),
+    "threshold-only": ("Threshold-only (default): explorables for the few portal concepts "
+                       "per topic. You can always ask for one on any node."),
+    "off": "Off: no explorables are built. Dialogue still dual-codes (ASCII sketches, tables).",
+}
+
+def cmd_visuals(args):
+    """Toggle the visual-encoding dial (`settings.artifacts`) — a discoverable wrapper
+    over `model --set settings.artifacts=...`, sibling to `focus`. The levels gate when
+    the artifact-smith fires; content-appropriateness stays with the node's viz hint
+    (Willingham: match the content, not the learner) and the learner can request an
+    explorable on any node regardless of level. docs/06-visual-encoding.md."""
+    m = load_model()
+    if args.action in VISUALS_LEVELS:
+        m["settings"]["artifacts"] = VISUALS_LEVELS[args.action]
+        write_json(p("learner-model.json"), m)
+    cur = m["settings"].get("artifacts", "threshold-only")
+    if cur not in VISUALS_NOTES:  # hand-edited to garbage: report, don't crash
+        cur = "threshold-only"
+    emit({"artifacts": m["settings"].get("artifacts"), "note": VISUALS_NOTES[cur]})
+
+def cmd_artifact(args):
+    """Register/inspect explorables on graph nodes. The graph's `artifact` field is
+    engine-owned (like fsrs/state): only this command records one, after checking the
+    file actually exists — Contract clause 7 (versioned + regenerable) and the modality
+    telemetry both depend on registrations being true. Paths under the state dir are
+    stored home-relative so a moved home doesn't dangle every registration."""
+    if args.action == "list":
+        out = []
+        for t, g in iter_graphs(args.topic):
+            for nid in g.get("order", []):
+                node = g["nodes"].get(nid)
+                a = (node or {}).get("artifact")
+                if isinstance(a, str) and a:
+                    ap = a if os.path.isabs(a) else p(a)
+                    out.append({"topic": t, "node": nid, "artifact": a,
+                                "exists": os.path.isfile(ap)})
+        emit(out)
+        return
+    for req, what in ((args.topic, "--topic"), (args.node, "--node")):
+        if not req:
+            die("artifact %s needs %s" % (args.action, what))
+    g = load_graph(args.topic)
+    node = g["nodes"].get(args.node)
+    if node is None:
+        die("unknown node %s in topic %s" % (args.node, args.topic))
+    if args.action == "set":
+        if not args.path:
+            die("artifact set needs --path")
+        rp = os.path.realpath(os.path.expanduser(args.path))
+        if not os.path.isfile(rp):
+            die("artifact file not found: %s (write the file first, then register it)"
+                % args.path)
+        base = os.path.realpath(home())
+        node["artifact"] = os.path.relpath(rp, base) if rp.startswith(base + os.sep) else rp
+    else:  # clear — superseded/regenerating (the old file is not deleted, just unlinked)
+        node["artifact"] = None
+    save_graph(g)
+    emit({"ok": True, "topic": args.topic, "node": args.node,
+          "artifact": node["artifact"]})
 
 def cmd_misconception(args):
     path = p("misconceptions.json")
@@ -946,6 +1032,46 @@ def compute_momentum(receipts):
         "retained_total": retained_total,
     }
 
+MODALITY_MIN_N = 6   # same floor as the n-of-1 experiment convention (min_per_arm)
+
+def compute_modality(receipts):
+    """Per-learner medium yield (Article 7: adapt on evidence, never taxonomy).
+    Compares first-review recall between nodes that HAD a registered explorable at
+    review time (the receipt's own `artifact` stamp) and dialogue-only nodes. This is
+    the honest per-learner answer to "do explorables work for ME" — a preference is
+    honored as a preference, but retention data arbitrates (docs/01 §Rejections;
+    docs/06-visual-encoding.md). One datum per node (its FIRST review), because later
+    reviews confound medium with maturity. Deliberately suggestive, never 'proven':
+    the read is guarded by the same per-arm floor as n-of-1 experiments."""
+    first = {}
+    for r in receipts:
+        if r.get("kind") != "review" or not r.get("rating"):
+            continue
+        d = safe_date(r.get("ts"))
+        if d is None:
+            continue
+        key = (r.get("topic"), r.get("node"))
+        if key not in first or d < first[key][0]:   # ties: keep the earlier-appended
+            first[key] = (d, r)
+    arms = {"explorable": [0, 0], "dialogue": [0, 0]}
+    for _d, r in first.values():
+        arm = "explorable" if r.get("artifact") else "dialogue"
+        arms[arm][1] += 1
+        if r["rating"] != "again":
+            arms[arm][0] += 1
+    out = {a: {"first_review_recall": (round(ok / n, 3) if n else None), "n": n}
+           for a, (ok, n) in arms.items()}
+    ex, dg = out["explorable"], out["dialogue"]
+    if ex["n"] >= MODALITY_MIN_N and dg["n"] >= MODALITY_MIN_N:
+        diff = ex["first_review_recall"] - dg["first_review_recall"]
+        out["read"] = ("explorable-encoded ahead" if diff > 0.10 else
+                       "dialogue-encoded ahead" if diff < -0.10 else
+                       "indistinguishable")
+    else:
+        out["read"] = "insufficient-data"
+    out["min_n"] = MODALITY_MIN_N
+    return out
+
 def compute_stats():
     receipts = collect_receipts()
     reviews = [r for r in receipts if r.get("kind") == "review" and r.get("rating")]
@@ -978,6 +1104,7 @@ def compute_stats():
         "calibration_encode": calibration_encode,
         "streak_days": compute_streak(receipts),
         "momentum": compute_momentum(receipts),
+        "modality": compute_modality(receipts),
         "due_now": len(due_items()),
         "pending_verify": len(read_jsonl(p(STASH_FILE))),
         "topics": topics,
@@ -1093,6 +1220,7 @@ def cmd_refit(args):
 
 def cmd_doctor(_args):
     issues = []
+    notes = []   # non-failing observations with a fix path (doctor stays ok)
     info = {"python": "%d.%d.%d" % sys.version_info[:3], "home": home()}
     os.makedirs(home(), exist_ok=True)
     info["writable"] = os.access(home(), os.W_OK)
@@ -1125,6 +1253,19 @@ def cmd_doctor(_args):
                 issues.append("%s/%s: state=%s but no due date" % (t, nid, st))
             elif due and safe_date(due) is None:
                 issues.append("%s/%s: unparseable due date %r" % (t, nid, due))
+            a = node.get("artifact")
+            if isinstance(a, str) and a:
+                ap = a if os.path.isabs(a) else p(a)
+                if not os.path.isfile(ap):
+                    issues.append("%s/%s: registered artifact missing on disk: %s "
+                                  "(regenerate it, or `artifact clear`)" % (t, nid, a))
+            elif slug_ok(nid) and os.path.isfile(p("artifacts", t, nid + ".html")):
+                # an explorable exists at the conventional path but was never
+                # registered (pre-0.5 builds) — registration enables regeneration
+                # tracking and the modality telemetry, so surface the exact fix
+                notes.append("%s/%s: unregistered artifact file — register with: "
+                             "artifact set --topic %s --node %s --path %s"
+                             % (t, nid, t, nid, p("artifacts", t, nid + ".html")))
     # surface quarantined corrupt files so the user knows state was preserved, not lost
     corrupt = []
     for sub in ("", "graphs"):
@@ -1138,6 +1279,7 @@ def cmd_doctor(_args):
     info["pending_verify"] = len(read_jsonl(p(STASH_FILE)))
     info["artifacts"] = sum(len(files) for _, _, files in os.walk(p("artifacts")))
     info["issues"] = issues
+    info["notes"] = notes
     info["ok"] = not issues
     emit(info)
 
@@ -1264,6 +1406,31 @@ def cmd_report(args):
         parts.append("<p class='note'>No honest confidence data yet — confidence is recorded "
                      "only when you actually say a number before feedback. It is never estimated "
                      "for you.</p>")
+
+    parts.append("<h2>Encoding medium</h2>")
+    mod = stats["modality"]
+    if mod["read"] != "insufficient-data":
+        for arm, label in (("explorable", "explorable"), ("dialogue", "dialogue-only")):
+            v = mod[arm]
+            parts.append("<div class='hbar'><span class='lab mono'>%s</span>"
+                         "<span class='track'><span class='fill' style='width:%d%%'></span></span>"
+                         "<span class='val'>%d%% first-review recall · n=%d</span></div>"
+                         % (escape(label), int(v["first_review_recall"] * 100),
+                            int(v["first_review_recall"] * 100), v["n"]))
+        parts.append("<p class='note'>%s — your own receipts comparing how concepts "
+                     "encoded with an interactive explorable hold up against dialogue-only "
+                     "ones, at each node's first review. Suggestive, not proven (n is small); "
+                     "<span class='mono'>visuals eager|threshold|off</span> is the dial.</p>"
+                     % escape(mod["read"]))
+    elif mod["explorable"]["n"] == 0:
+        parts.append("<p class='note'>No explorable-encoded reviews yet — once explorables "
+                     "enter the mix, their retention is compared against dialogue-only "
+                     "encoding here, from your own receipts.</p>")
+    else:
+        parts.append("<p class='note'>Comparing media needs ≥%d first-reviews per arm "
+                     "(explorable-encoded: %d, dialogue: %d so far) — the honest verdict "
+                     "appears when both sides have history.</p>"
+                     % (mod["min_n"], mod["explorable"]["n"], mod["dialogue"]["n"]))
 
     mis = [m for m in read_json(p("misconceptions.json"), []) if m.get("status") == "open"]
     if mis:
@@ -1742,6 +1909,126 @@ def cmd_selftest(_args):
     check("generated ids embed pid and are unique",
           str(os.getpid()) in gen_id("r") and gen_id("r") != gen_id("r"))
 
+    # ============ 0.5.0 visual-encoding layer checks ============
+
+    # -- artifact registration: engine-owned, validated, home-relative, replace-safe --
+    def _artifact_lifecycle(h):
+        _add_ab()
+        missing = raises(cmd_artifact, _ns(action="set", topic="t", node="a",
+                                           path=os.path.join(h, "nope.html")))
+        apath = os.path.join(h, "artifacts", "t", "a.html")
+        os.makedirs(os.path.dirname(apath), exist_ok=True)
+        with open(apath, "w") as f:
+            f.write("<!doctype html>")
+        _capture(cmd_artifact, _ns(action="set", topic="t", node="a", path=apath))
+        stored = load_graph("t")["nodes"]["a"]["artifact"]
+        rel = stored == os.path.join("artifacts", "t", "a.html")
+        lst = _capture_json(cmd_artifact, _ns(action="list"))
+        listed = len(lst) == 1 and lst[0]["exists"] is True
+        # restructure the topic: a payload-supplied artifact is stripped, and the
+        # real registration survives --replace exactly like the schedule does
+        g2 = {"topic": "t", "title": "T2", "order": ["a", "b"], "nodes": {
+            "a": {"claim": "A", "probe": "pa", "artifact": "../evil.html"},
+            "b": {"claim": "B", "probe": "pb"}}}
+        _capture(cmd_add_topic, _ns(json=json.dumps(g2), replace=True))
+        kept = load_graph("t")["nodes"]["a"]["artifact"] == stored
+        _capture(cmd_artifact, _ns(action="clear", topic="t", node="a"))
+        cleared = load_graph("t")["nodes"]["a"]["artifact"] is None
+        return missing and rel and listed and kept and cleared
+    check("artifact set validates+relativizes, survives --replace, clears",
+          fresh(_artifact_lifecycle))
+
+    # -- receipts stamp the medium at grading time, never retroactively --
+    def _receipt_stamp(h):
+        _add_ab()
+        _capture(cmd_rate, _ns(topic="t", node="a", rating="good",
+                               grade="recalled", kind="encode"))
+        apath = os.path.join(h, "artifacts", "t", "a.html")
+        os.makedirs(os.path.dirname(apath), exist_ok=True)
+        with open(apath, "w") as f:
+            f.write("x")
+        _capture(cmd_artifact, _ns(action="set", topic="t", node="a", path=apath))
+        _capture(cmd_rate, _ns(topic="t", node="a", rating="good",
+                               grade="recalled", kind="review"))
+        rs = collect_receipts()
+        pre = [r for r in rs if r["kind"] == "encode"][0]
+        post = [r for r in rs if r["kind"] == "review"][0]
+        return "artifact" not in pre and post.get("artifact") is True
+    check("receipt stamps artifact-at-grading-time only after registration",
+          fresh(_receipt_stamp))
+
+    # -- modality telemetry: guarded read, arm split, first-review-per-node only --
+    mod_thin = compute_modality([{"ts": "2026-07-01", "kind": "review", "rating": "good",
+                                  "topic": "t", "node": "a", "artifact": True}])
+    check("modality guarded on thin data",
+          mod_thin["read"] == "insufficient-data" and mod_thin["explorable"]["n"] == 1)
+    syn = []
+    for i in range(6):
+        syn.append({"ts": "2026-07-01", "kind": "review", "rating": "good",
+                    "topic": "t", "node": "e%d" % i, "artifact": True})
+        syn.append({"ts": "2026-07-02", "kind": "review", "rating": "again",
+                    "topic": "t", "node": "e%d" % i, "artifact": True})  # 2nd review: ignored
+        syn.append({"ts": "2026-07-01", "kind": "review", "rating": "again",
+                    "topic": "t", "node": "d%d" % i})
+    mod = compute_modality(syn)
+    check("modality splits arms on first review only",
+          mod["explorable"]["n"] == 6 and mod["explorable"]["first_review_recall"] == 1.0
+          and mod["dialogue"]["n"] == 6 and mod["dialogue"]["first_review_recall"] == 0.0
+          and mod["read"] == "explorable-encoded ahead")
+    check("stats exposes the modality block",
+          fresh(lambda h: _capture_json(cmd_stats, _ns())["modality"]["read"]
+                == "insufficient-data"))
+
+    # -- visuals dial round-trips and reports --
+    def _visuals(h):
+        _capture_json(cmd_visuals, _ns(action="eager"))
+        m1 = read_json(os.path.join(h, "learner-model.json"))["settings"]["artifacts"]
+        _capture_json(cmd_visuals, _ns(action="threshold"))
+        m2 = read_json(os.path.join(h, "learner-model.json"))["settings"]["artifacts"]
+        o = _capture_json(cmd_visuals, _ns(action="off"))
+        s = _capture_json(cmd_visuals, _ns(action="status"))
+        return (m1 == "eager" and m2 == "threshold-only" and o["artifacts"] == "off"
+                and s["artifacts"] == "off" and "note" in s)
+    check("visuals eager/threshold/off round-trip via the wrapper", fresh(_visuals))
+
+    # -- viz hint: object kept verbatim, non-object dropped with a warning --
+    def _viz_hint(h):
+        g2 = {"topic": "t", "title": "T", "order": ["a", "b"], "nodes": {
+            "a": {"claim": "A", "probe": "pa",
+                  "viz": {"affordance": "high", "kind": "dynamic", "hook": "slider"}},
+            "b": {"claim": "B", "probe": "pb", "viz": "very visual"}}}
+        out = json.loads(_capture(cmd_add_topic, _ns(json=json.dumps(g2))))
+        saved = load_graph("t")["nodes"]
+        return (saved["a"]["viz"]["affordance"] == "high" and saved["b"]["viz"] is None
+                and any("viz" in w for w in out["warnings"]))
+    check("viz hint: object kept, non-object dropped with warning", fresh(_viz_hint))
+
+    # -- due payload carries artifact presence (review re-encode path reads it) --
+    def _due_artifact_flag(h):
+        _add_ab()
+        _capture(cmd_rate, _ns(topic="t", node="a", rating="good", kind="encode"))
+        os.environ["ENGRAM_TODAY"] = "2026-09-01"
+        return due_items()[0]["artifact"] is False
+    check("due payload carries artifact presence flag", fresh(_due_artifact_flag))
+
+    # -- doctor: unregistered file is a note (still ok); dangling registration fails --
+    def _doctor_artifacts(h):
+        _add_ab()
+        apath = os.path.join(h, "artifacts", "t", "a.html")
+        os.makedirs(os.path.dirname(apath), exist_ok=True)
+        with open(apath, "w") as f:
+            f.write("x")
+        d1 = _capture_json(cmd_doctor, _ns())
+        note_ok = d1["ok"] is True and any("unregistered artifact" in n for n in d1["notes"])
+        _capture(cmd_artifact, _ns(action="set", topic="t", node="a", path=apath))
+        os.remove(apath)
+        d2 = _capture_json(cmd_doctor, _ns())
+        dangle = (d2["ok"] is False
+                  and any("registered artifact missing" in i for i in d2["issues"]))
+        return note_ok and dangle
+    check("doctor notes unregistered artifacts, fails dangling registrations",
+          fresh(_doctor_artifacts))
+
     print("\n%d/%d checks passed" % (total[0] - len(failures), total[0]))
     sys.exit(1 if failures else 0)
 
@@ -1755,7 +2042,7 @@ def _ns(**kw):
                     limit=None, set=None, add_interest=None, add_goal=None, action=None,
                     id=None, verdict=None, description=None, force=False,
                     out=None, allow_outside=False, mode=None, minutes=None,
-                    items=None, notes=None)
+                    items=None, notes=None, path=None)
     defaults.update(kw)
     for k, v in defaults.items():
         setattr(ns, k, v)
@@ -1815,6 +2102,13 @@ def main():
     sp = sub.add_parser("focus")
     sp.add_argument("action", choices=("on", "off", "status"))
 
+    sp = sub.add_parser("visuals")
+    sp.add_argument("action", choices=("eager", "threshold", "off", "status"))
+
+    sp = sub.add_parser("artifact")
+    sp.add_argument("action", choices=("set", "clear", "list"))
+    sp.add_argument("--topic"); sp.add_argument("--node"); sp.add_argument("--path")
+
     sp = sub.add_parser("misconception")
     sp.add_argument("action", choices=("add", "list", "resolve"))
     sp.add_argument("--topic"); sp.add_argument("--node")
@@ -1842,7 +2136,7 @@ def main():
         "topics": cmd_topics, "add-topic": cmd_add_topic, "next": cmd_next,
         "topic-status": cmd_topic_status, "due": cmd_due, "rate": cmd_rate,
         "receipt": cmd_receipt, "stash": cmd_stash, "model": cmd_model,
-        "focus": cmd_focus,
+        "focus": cmd_focus, "visuals": cmd_visuals, "artifact": cmd_artifact,
         "misconception": cmd_misconception, "experiment": cmd_experiment,
         "log-session": cmd_log_session, "stats": cmd_stats,
         "refit": cmd_refit, "doctor": cmd_doctor, "report": cmd_report,

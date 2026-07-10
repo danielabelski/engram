@@ -70,7 +70,7 @@ Global, project-independent, human-readable, schema-versioned: `~/.claude/learni
 }
 ```
 
-Calibration (Brier/bias) is **computed on demand** from receipts by `stats`, never stored in the model — so it can never drift from the evidence. The per-topic learning goal is stored on the graph (`graph.goal`); `goals` here is an optional flat list of standing aims (`--add-goal`). `refit` fits a single `interval_multiplier` from ≥50 review receipts (full per-parameter FSRS optimization is future work).
+Calibration (Brier/bias) is **computed on demand** from receipts by `stats`, never stored in the model — so it can never drift from the evidence. The per-topic learning goal is stored on the graph (`graph.goal`); `goals` here is an optional flat list of standing aims (`--add-goal`). `refit` fits a single `interval_multiplier` from ≥50 review receipts (full per-parameter FSRS optimization is future work). `settings.artifacts` is the **visuals dial** — `off` · `threshold-only` (default) · `eager` (threshold **and** high-viz-affordance nodes) — toggled via the `visuals` command; the content's own `viz` hint still decides what qualifies (`docs/06-visual-encoding.md`).
 
 **Graph node** (abridged):
 ```json
@@ -81,20 +81,21 @@ Calibration (Brier/bias) is **computed on demand** from receipts by `stats`, nev
   "edges": { "requires": ["conditional-probability-def"], "contrasts_with": ["frequency-fallacy"], "analogous_to": ["code-review-priors"] },
   "arbitrary": false,
   "threshold": false,
+  "viz": { "affordance": "high", "kind": "causal-parameter", "hook": "drag the prior; watch the posterior refuse to move without evidence" },
   "state": "review",
   "fsrs": { "s": 14.2, "d": 4.1, "due": "2026-07-11", "last": "2026-06-27", "reps": 3, "lapses": 0 },
   "artifact": "artifacts/probability/bayes-theorem.html"
 }
 ```
 
-(FSRS fields are `s`/`d` — stability/difficulty. Receipts are **not** stored on the node; they live append-only in `receipts/<topic>.jsonl`, keyed by node, so evidence survives graph edits.) `arbitrary: true` routes a node to mnemonic+SRS treatment (no derivation theater for irregular verbs). `threshold: true` triggers explorable-by-default and extra relearning cycles.
+(FSRS fields are `s`/`d` — stability/difficulty. Receipts are **not** stored on the node; they live append-only in `receipts/<topic>.jsonl`, keyed by node, so evidence survives graph edits.) `arbitrary: true` routes a node to mnemonic+SRS treatment (no derivation theater for irregular verbs). `threshold: true` triggers explorable-by-default and extra relearning cycles. `viz` is the architect's **content-declared visual affordance** (Willingham's rule made data; `docs/06`) — it, plus the visuals dial, gates when the artifact-smith fires. `artifact` is **engine-owned like `fsrs`/`state`**: only `artifact set` (which validates the file exists) records one, payload-supplied values are stripped, and registrations survive `add-topic --replace`; receipts stamp whether an artifact existed at grading time, which is what `stats.modality` compares (explorable-encoded vs dialogue-only first-review recall, ≥6 per arm before any verdict).
 
 ## 3. The five loops
 
 **LEARN** (skill: `/learn <topic|continue>`):
 1. *Frontier diagnosis* — curriculum-architect builds/loads the DAG; a short pretest walks the frontier (knowledge-space style; also the curiosity trigger — pretesting effect). Never quizzes the whole graph.
 2. *Encode one node* — tutor runs the dialogue grammar: **predict → attempt → hint ladder (struggle budget) → resolve → self-explain → connect** (name the why-chain edges out loud). Scaffolding level set by the node's expertise estimate (worked example ↔ cold problem).
-3. *Artifact* — for threshold/visualizable nodes, artifact-smith generates an explorable (Contract, §6); the learner *uses* it (gated interactions), doesn't watch it.
+3. *Artifact* — per the visuals dial (`threshold-only` default; `eager` adds `viz.affordance: high` nodes; explicit request overrides any level), artifact-smith generates an explorable in the background (Contract, §6) and registers it; the learner *uses* it (gated interactions), doesn't watch it.
 4. *Immediate verify* — assessor grades a free-recall production + one application item; confidence collected before feedback; receipt written; FSRS initialized.
 5. *Close the loop* — one-line preview that opens the next question (curiosity gap), session logged.
 
@@ -133,9 +134,9 @@ The learner can always appeal a grade — the appeal and its resolution are them
 
 ## 6. The Explorable Contract (artifact-smith's binding spec)
 
-Every generated HTML artifact MUST: (1) open with a committed prediction/question — content stays gated until the learner commits; (2) contain ≥1 manipulable model (slider/drag/toggle) whose behavior the learner predicts before first touch; (3) embed ≥2 retrieval prompts inline (mnemonic-medium style) that feed real FSRS state via export/paste-back or session capture; (4) obey Mayer: zero decoration, signaled structure, learner-paced segments, labels on the thing; (5) be fully self-contained offline HTML (no CDNs); (6) end with a blank-page reconstruction prompt ("close this; rebuild the argument skeleton"); (7) carry its node id + version so it regenerates when the learner's model or mastery changes.
+Every generated HTML artifact MUST (v2 — audited and sharpened in `docs/06-visual-encoding.md`): (1) open with a committed prediction/question — content stays gated until the learner commits; (2) contain ≥1 **guided** manipulable model (slider/drag/toggle; only content-relevant degrees of freedom) inside a predict → act → **explain** micro-cycle, with a worked drive gating the model at novice scaffold (expertise reversal — never a bare sandbox); (3) embed ≥2 retrieval prompts inline (mnemonic-medium style) that feed real FSRS state via export/paste-back or session capture; (4) obey Mayer: zero decoration, signaled structure, **no text over motion**, learner-advanced segments whose dynamics run themselves, labels on the thing; (5) be fully self-contained offline HTML (no CDNs); (6) end with a blank-page reconstruction prompt ("close this; rebuild the argument skeleton"); (7) carry its node id + version, be **registered** on the graph via `artifact set`, and regenerate (not patch) when the learner's model or mastery changes.
 
-`templates/` seeds the widget library: parameter-slider sim, predict-then-reveal plot, drag-to-order causal chain, contrast-pair toggle (variation theory), DAG mastery map, calibration scatter. The library grows; the Contract doesn't bend.
+The widget vocabulary lives in `skills/_shared/explorable-contract.md`: parameter-slider sim, feature-space navigator, predict-then-reveal plot, drag-to-order causal chain, contrast-pair toggle (variation theory), worked-example stepper, DAG mastery map. The library grows; the Contract doesn't bend.
 
 ## 7. Convenience doctrine (the "extremely convenient" requirement, made testable)
 

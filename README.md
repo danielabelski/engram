@@ -3,11 +3,12 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-0.4.4-6D4AA8.svg" alt="Version 0.4.4">
+  <img src="https://img.shields.io/badge/version-0.5.0-6D4AA8.svg" alt="Version 0.5.0">
   <img src="https://img.shields.io/badge/license-MIT-yellow.svg" alt="MIT License">
-  <img src="https://img.shields.io/badge/selftest-70%2F70-3E7D5A.svg" alt="70/70 checks">
+  <img src="https://img.shields.io/badge/selftest-79%2F79-3E7D5A.svg" alt="79/79 checks">
   <img src="https://img.shields.io/badge/scheduler-FSRS--4.5-6D4AA8.svg" alt="FSRS-4.5">
   <img src="https://img.shields.io/badge/data-100%25%20local-3E7D5A.svg" alt="100% local">
+  <a href="https://discord.gg/temm1e"><img src="https://img.shields.io/badge/discord-community-5865F2.svg" alt="Discord community"></a>
 </p>
 
 <h3 align="center">Claude can explain anything. Engram makes sure you still know it next month.</h3>
@@ -154,6 +155,7 @@ Engram implements the four most-replicated findings in learning science — and 
 3. **Retention** — testing *is* the learning (not the measurement of it), and spacing beats bingeing. Free recall on an FSRS schedule fitted to your own review history.
 4. **Honest adaptation** — it adapts from your *measured* retention, calibration, and error patterns. Confidence is only recorded when you actually state it; grades only exist as written receipts.
 5. **Motivation & wisdom, honestly** — it makes your *real* competence growth visible at the moment it happens (the memory that now lasts 4× longer — not points or streaks, which backfire on motivated adults), and it carries you through the hard part: struggle named as encoding, lapses absolved not pitied, backlogs met with amnesty. Two new layers, every claim adversarially verified against the primary source — [docs/05-affective-layers.md](docs/05-affective-layers.md).
+6. **Visuals that earn their keep** (v0.5) — interactive explorables are built when the *content* rewards manipulation (a parameter to drag, a process that unfolds — declared per concept by the curriculum architect, never inferred from a "visual learner" label), always wrapped in predict → act → explain guidance, because the guidance is what carries the effect (scaffolded simulations beat identical unscaffolded ones, g+ = 0.60). You choose the eagerness (`visuals eager|threshold|off`), and your own review receipts then measure whether the medium actually holds better *for you* — [docs/06-visual-encoding.md](docs/06-visual-encoding.md).
 
 <details>
 <summary><b>Citations & full theory</b> (for the skeptical — click)</summary>
@@ -162,7 +164,9 @@ The load-bearing evidence: retrieval practice (Roediger & Karpicke 2006; Karpick
 
 The affective layers (v0.4): competence-as-information (Deci/Koestner/Ryan 1999 — verbal competence feedback lifts *adult* intrinsic motivation d=+0.33, but flips to d=−0.78 when controlling), progress salience (Harkin et al. 2016, 138 RCTs, d=0.40), curiosity's reward circuit (Gruber, Gelman & Ranganath 2014), return-after-absence amnesty (Silverman & Barasch 2023; Lally et al. 2010) — and the refusals it's built on: gamification's motivational effect is the *least* robust (Sailer & Homner 2020) and backfires on already-motivated adults (Hanus & Fox 2015), streaks install a proxy goal, growth-mindset framing is small and context-specific (Sisk 2018; Yeager 2019), sympathy-after-failure reads as a low-ability cue (Graham 1984), and over-helpful AI tutoring harms retention (Bastani 2025). ADHD is honored as an opt-in *Focus profile* that turns up the same universal dials — not a new pedagogy, and pointedly not a game.
 
-Full treatment with design consequences: [docs/01-foundations.md](docs/01-foundations.md) · what exists and what's missing in every other tool: [docs/02-prior-art.md](docs/02-prior-art.md) · system design: [docs/03-architecture.md](docs/03-architecture.md) · roadmap & constitution: [docs/04-roadmap.md](docs/04-roadmap.md) · the motivation & wisdom layers: [docs/05-affective-layers.md](docs/05-affective-layers.md)
+The visual-encoding audit (v0.5): interactive simulations carry the largest verified interactivity effect (g+=0.62, D'Angelo/SRI 2014) but *guidance inside the artifact is the active ingredient* (scaffolded versions of the same simulation g+=0.60; guidance in inquiry d=0.50, Lazonder & Harmsen 2016); dynamic-vs-static is modest and moderator-driven (g=0.226, Berney & Bétrancourt 2016 — concentrated where the motion *is* the content, d=0.40 representational vs ≈−0.05 decorative); learner control per se is worth ≈nothing (g=0.05, Karich 2014); seductive details reliably hurt (Sundararajan & Adesope 2020); and expertise reversal is a confirmed disordinal crossover (novices +0.505 with assistance, knowledgeable learners −0.428; Tetzlaff 2025) — which is why explorables are content-triggered, guidance-wrapped, scaffold-faded, and measured against your own receipts rather than assumed to work. What didn't survive verification is stated as open, not assumed — [docs/06-visual-encoding.md](docs/06-visual-encoding.md).
+
+Full treatment with design consequences: [docs/01-foundations.md](docs/01-foundations.md) · what exists and what's missing in every other tool: [docs/02-prior-art.md](docs/02-prior-art.md) · system design: [docs/03-architecture.md](docs/03-architecture.md) · roadmap & constitution: [docs/04-roadmap.md](docs/04-roadmap.md) · the motivation & wisdom layers: [docs/05-affective-layers.md](docs/05-affective-layers.md) · the visual-encoding audit: [docs/06-visual-encoding.md](docs/06-visual-encoding.md)
 
 </details>
 
@@ -182,7 +186,7 @@ transformers — Transformers from first principles
 · depth-necessity        †  due —            S=—
 ```
 
-**Interactive explorables** for threshold concepts — self-contained HTML with prediction gates (content stays locked until you commit a guess), manipulable models, and embedded retrieval prompts. **A local HTML dashboard** (`/coach dashboard`) with per-topic maps, retention-by-strength bars vs. the 85% target band, honest calibration, and your next-7-days forecast. Both live in `~/.claude/learning/artifacts/` — no network, ever.
+**Interactive explorables** — self-contained HTML with prediction gates (content stays locked until you commit a guess), guided manipulable models, and embedded retrieval prompts. Built for threshold concepts by default; set `visuals eager` and they're also built whenever a concept's own structure rewards manipulation (the curriculum architect declares this per node — features you can drag, processes that unfold); or just ask mid-lesson: *"make it visual."* **A local HTML dashboard** (`/coach dashboard`) with per-topic maps, retention-by-strength bars vs. the 85% target band, honest calibration, an encoding-medium comparison (do explorable-encoded concepts hold better *for you*? — your own receipts answer), and your next-7-days forecast. Both live in `~/.claude/learning/artifacts/` — no network, ever.
 
 ---
 
@@ -199,6 +203,9 @@ Yes — the engine doesn't care. History, music theory, statistics, anatomy (it 
 
 **What if I just want the answer?**
 Say "just tell me" — it complies immediately, no lecture. It also quietly schedules that concept for earlier review, because told-not-derived decays faster. Your call, honestly priced.
+
+**I'm a visual learner — will it build me visuals?**
+Careful — two different things are true. "Visual learner" as a *learning style* is a debunked theory (matching instruction to a diagnosed style has failed every controlled test), so Engram will never route content by that label. But interactive visuals as a *medium* are real and measured — strongest exactly when the concept itself is manipulable (a parameter to drag, a process that unfolds) and when the interaction is guided, which is how Engram builds them. So: the **content** decides what qualifies (each concept carries a declared visual affordance), **you** decide the eagerness — say *"build visuals eagerly"* or run `python3 scripts/engram.py visuals eager` (or `threshold`/`off`; you can also just ask *"make it visual"* on any concept mid-lesson) — and then your own review receipts quietly measure whether explorable-encoded concepts actually hold better for you. `/coach` shows the verdict with honest sample sizes. Preference honored, evidence in charge: [docs/06-visual-encoding.md](docs/06-visual-encoding.md).
 
 **I have ADHD / I keep getting bored and quitting — is there a mode for that?**
 Yes: an opt-in **Focus profile**. It doesn't add a game — no XP, streaks, or badges (the evidence says those backfire on motivated adults; see [docs/05](docs/05-affective-layers.md)). It turns *up* dials Engram already has: one node per session so you can't drift, your **real** memory-growth surfaced every review (*"this now lasts ~4× longer"* — a true stability number, not points), and amnesty whenever you return to a backlog instead of a guilt pile. Two ways to switch it, whichever you like:
@@ -229,10 +236,12 @@ The model never does calendar math; this does:
 | `stash add\|list\|count\|clear` | crash-safe queue of answers awaiting grading |
 | `model` / `misconception` / `experiment` | open learner model · error catalog · n-of-1 trials |
 | `focus on\|off\|status` | toggle the ADHD Focus profile (Sprint default, growth every review, always-on amnesty) |
-| `stats` / `report` | telemetry JSON · self-contained HTML dashboard |
+| `visuals eager\|threshold\|off\|status` | the explorables dial: portal concepts only (default) · every high-affordance concept · none |
+| `artifact set\|clear\|list` | register a built explorable on its node (validated; powers regeneration tracking + the medium comparison) |
+| `stats` / `report` | telemetry JSON (incl. `modality` — explorable vs dialogue retention) · self-contained HTML dashboard |
 | `refit` | fit review intervals to your measured recall (guarded, ≥50 reviews) |
 | `session-start` / `log-session` | ambient nudge (hook) · session telemetry |
-| `selftest` | 70 checks over the FSRS math, state machine, and every hardened boundary |
+| `selftest` | 79 checks over the FSRS math, state machine, and every hardened boundary |
 
 </details>
 
@@ -278,6 +287,7 @@ Separation of powers, enforced by construction: the **tutor** teaches but never 
 | [docs/03-architecture.md](docs/03-architecture.md) | State schemas, the five loops, agent separation of powers, the Explorable Contract, adaptation policy |
 | [docs/04-roadmap.md](docs/04-roadmap.md) | Phased plan with measurable exit criteria, metrics, risks, and the ten-article constitution |
 | [docs/05-affective-layers.md](docs/05-affective-layers.md) | The motivation & wisdom layers (v0.4): two new pillars — competence salience and the mentor stance — each evidence-cited and adversarially checked; the ADHD Focus profile; why no gamification |
+| [docs/06-visual-encoding.md](docs/06-visual-encoding.md) | The visual-encoding audit (v0.5): P15 — the guided manipulable; when interactive visuals help (and the boundary conditions that are just as robust); the viz affordance taxonomy, visuals dial, and per-learner medium telemetry; what the audit killed and what stays honestly open |
 
 ## More from the same workshop
 

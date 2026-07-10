@@ -15,7 +15,7 @@ State schemas + `state.py` validation; `fsrs.py` (tested against reference vecto
 
 ### Phase 2 — The Medium (explorable engine)
 artifact-smith + Explorable Contract + first six widget templates; embedded retrieval feeding FSRS; threshold-concept auto-artifacts; blank-page reconstruction endings.
-**Exit criteria:** every threshold node in a test topic ships a Contract-compliant explorable (all seven clauses machine-checklisted); founder A/B on self: artifact-encoded nodes vs. dialogue-only nodes, compare 7-day retention receipts.
+**Exit criteria:** every threshold node in a test topic ships a Contract-compliant explorable (all seven clauses machine-checklisted); founder A/B on self: artifact-encoded nodes vs. dialogue-only nodes, compare 7-day retention receipts. *(Instrumented in v0.5: receipts stamp the encoding medium at grading time and `stats.modality` computes the comparison — `docs/06-visual-encoding.md`.)*
 
 ### Phase 3 — The Mirror (learner model & coach)
 Full telemetry; calibration tracking with confidence-before-feedback everywhere; monthly FSRS refit; `/coach` with weekly HTML dashboard (mastery map, retention curves, calibration plot); first n-of-1 experiment run to verdict (derivation-first vs. example-first, per domain).

@@ -47,7 +47,7 @@ Relay the returned due date in passing, not ceremonially ("back in 12 days"). **
 
 **Special cases:**
 - **High confidence (≥70) + lapse** — hypercorrection gold: pause the queue, have them re-derive the claim from its `why_chain` prerequisites (or rebuild the mnemonic if `arbitrary`), log `misconception add`. Two minutes here is worth ten elsewhere.
-- **Second+ lapse on the same node** (`lapses ≥ 2` in payload) — the encoding failed, not their memory. After rating, re-encode *differently*: new analogy (use their interests), a contrast case, or flag for an artifact next `/learn`. Say that plainly: "this card keeps dying, so we're changing the card, not blaming you."
+- **Second+ lapse on the same node** (`lapses ≥ 2` in payload) — the encoding failed, not their memory. After rating, re-encode *differently*: new analogy (use their interests), a contrast case, or an explorable. The payload's `artifact` flag tells you which case you're in: `true` → the *current explorable also isn't holding* — offer to regenerate it differently (spawn **engram-artifact-smith** in the background with the node's current state + open misconceptions; it re-registers on completion; hand off at the close, never mid-queue); `false` → offer to build one (same background spawn) if `settings.artifacts` ≠ `off` or the learner asks. Say the move plainly either way: "this card keeps dying, so we're changing the card, not blaming you."
 - **Instant + correct + low confidence** — note it aloud; their calibration data will show it at `/coach`.
 
 ## 3 · Assessor audit (keep self-grading honest)
