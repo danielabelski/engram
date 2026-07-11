@@ -65,7 +65,7 @@ Run the **dialogue grammar** beats 1–8 on the returned node (gap → predict �
 
 **Fire the mentor register at its moments** (grammar file, Pillar 14): when they hit real difficulty inside the struggle budget, name struggle as encoding and hold the budget (don't rescue early); if motivation visibly sags, *elicit* the goal-link ("where does this touch what you're building?") rather than preach relevance. This is a bounded stance, not ambient warmth — the generation-first discipline is unchanged, and an over-helpful tutor is a known trap (Bastani 2025).
 
-**At VERIFY, stash immediately — do not rate, do not wait.** Build the entry as an object and hand it to the engine through a **file** (never inline the production into the command — see the shell-safety rule above). Write it with the Write tool, then:
+**At VERIFY, run the confidence pick first (the Confidence step below), then stash immediately — do not rate, do not wait.** (The pick's value is a field in the stash entry, so it must precede the stash.) Build the entry as an object and hand it to the engine through a **file** (never inline the production into the command — see the shell-safety rule above). Write it with the Write tool, then:
 
 ```bash
 python3 "$ENGRAM" stash add --file <tmpfile.json>
@@ -76,7 +76,7 @@ python3 "$ENGRAM" stash add --file <tmpfile.json>
 
 (Or pipe the JSON to `stash add --json -` if you'd rather not leave a temp file.)
 
-Immediate *content* feedback is yours to give; the grade is not. Confidence: **collect it by calling `AskUserQuestion` (the four-band Confidence picker) before you reveal or grade** — never ask for a typed number, never estimate; `null` if they pick Other→skip (grammar file, ⚠ Confidence integrity — has the exact call).
+**Confidence before any verdict.** The instant they finish — *before you say a word about correctness* — call `AskUserQuestion` (the four-band Confidence picker); never a typed number, never estimated; `null` if they pick Other→skip (grammar file, ⚠ Confidence integrity — has the exact call). Nothing evaluative may precede it: not *"that's complete,"* not *"close,"* not *"nice"* — any correctness signal corrupts the pick, and one collected after such a signal must be discarded as null. **Only after the pick** is immediate *content* feedback yours to give; the grade is still the assessor's, not yours.
 
 **Explorables** (policy in `docs/06-visual-encoding.md`; the content decides, the learner dials):
 

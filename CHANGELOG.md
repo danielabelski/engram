@@ -1,5 +1,44 @@
 # Changelog
 
+## 0.5.2 — 2026-07-11 · confidence before the verdict, not after
+
+Reported from real use (#4 — thank you, @kosh-jelly): at VERIFY the tutor praised the
+answer — *"that's a complete, well-integrated answer…"* — and **then** fired the
+confidence picker. A sureness collected after the learner has been told they nailed it
+is not sureness; it is an echo of the verdict. Confidence-before-feedback exists to
+measure calibration and to catch high-confidence errors for hypercorrection — both die
+the instant any signal of correctness reaches the learner first.
+
+The intent was never in doubt: the picker itself asks *"before I show the answer."* The
+prose had a seam. The gate was worded around the **reveal** ("before you reveal or
+grade", "no canonical answer until confidence"), and `/learn`'s VERIFY step granted
+*"immediate content feedback is yours to give"* right beside it. So the model did what a
+careful reading allowed — withheld the canonical answer, kept the picker's framing
+honest, and let the *evaluation* through. The pretest step one screen up already had the
+tight wording ("before saying anything about correctness"); VERIFY did not.
+
+### Behavior (prose only; selftest unchanged, 86 → 86)
+- **`/learn` VERIFY** (`skills/learn/SKILL.md`): the pick fires **first**, gated on
+  "before you say a word about correctness," with the exact failure banned by example
+  (*"that's complete," "close," "nice"*). "Immediate content feedback is yours to give"
+  moved to **after** the pick; the pick is now also stated to precede the stash (its
+  value is a stash field, so it cannot come later).
+- **Confidence-integrity rule** (`skills/_shared/dialogue-grammar.md`): "feedback"
+  redefined as *any* signal of correctness — approving tone included — not just the
+  shown answer.
+- **Anti-sycophancy oath** (same file, hard rules): the gate broadened from "no
+  canonical answer until confidence" to "no verdict — not even a bare *'that's right'* —
+  until confidence is collected."
+- **Terse-production move** (same file): at VERIFY the *"credit what's there"* step now
+  waits until after the confidence pick — closing the one path (a fragment answer) where
+  the sharpened rule would otherwise still leak a correctness signal first. Found by this
+  release's own adversarial review, not in the wild.
+
+No engine touched: whether the tutor asks in the right order is a dialogue property,
+provable only by a live VERIFY, not a selftest. The old order didn't merely mis-sequence
+the question — it recorded a corrupted "Certain" as real calibration data. Putting the
+pick first is the fix; there is no unit test that can stand in for using it.
+
 ## 0.5.1 — 2026-07-10 · the modality confound, said out loud
 
 Found by doing what the release protocol asks and 0.5.0 skipped: a real `/learn`
