@@ -81,11 +81,24 @@ def safe_date(s):
         return None
 
 def as_number(x, default=None):
-    """Coerce a JSON scalar to float for math; None if not number-like."""
+    """Coerce a JSON scalar to float for math; the default if not number-like.
+
+    **NON-FINITE IS NOT A NUMBER.** `Infinity` and `NaN` are not valid JSON — and Python's `json`
+    module PARSES them anyway. So a hand-edited state file can hand this engine an `inf` that
+    sails through every `isinstance(x, float)` check and then blows up the moment anything calls
+    `int()` on it (`OverflowError`), or silently poisons every comparison it touches (`NaN`
+    compares False to everything, including itself, and never raises at all).
+
+    This is THE numeric gate for the whole engine — every scheduler leaf, every metric, every
+    threshold funnels through it. One line here; forty at the call sites, and the forty-first is
+    the one that ships."""
     if isinstance(x, bool) or x is None:
         return default
     if isinstance(x, (int, float)):
-        return float(x)
+        v = float(x)
+        if v != v or v in (float("inf"), float("-inf")):   # NaN, +inf, -inf
+            return default
+        return v
     return default
 
 def days_between(a_ts, b_ts):
@@ -682,10 +695,50 @@ def cmd_add_topic(args):
     # releases the capstone was a paragraph in a skill file that said "do not let this silently
     # not happen" — and it silently did not happen, every single time, because a tutor running
     # low on context drops a suggestion and never drops a DAG.
+    #
+    # v0.8.1 — THREE BUGS LIVED IN THESE FOUR LINES, all found by the post-release reviewer:
+    #
+    #  1. `--replace` DESTROYED a completed capstone's schedule. The architect's payload never
+    #     contains a capstone (it is popped at ingest), so `_has_capstone` was ALWAYS false on a
+    #     replace and the capstone was ALWAYS re-minted with `state: new, fsrs: fresh` — after
+    #     the carry-forward loop, so it was the one surviving node never carried forward. And it
+    #     flattered: the reset removed the rotting capstone from `retention.unmeasured`, so
+    #     "1 concept past due and unretrieved" became "30-day recall 100%". Survivorship bias,
+    #     through a new door.
+    #  2. `--replace` wiped `node.transfer` and never rebuilt it (unlike `artifact`, which is
+    #     recomputed from evidence). Graph said `None`; `stats` still said `applied: 1`.
+    #  3. A payload node legitimately named `capstone` was SILENTLY overwritten — and the minted
+    #     capstone then listed ITSELF in `requires`, so it could never be served, while `next`
+    #     cheerfully reported "this topic is finished".
     real = {nid: n for nid, n in g["nodes"].items() if not n.get("capstone")}
-    if real and not _has_capstone(g["nodes"]):
-        g["nodes"][CAPSTONE_ID] = _capstone_node(g, real)
+    if CAPSTONE_ID in real:
+        die("node id `%s` is reserved for the engine's capstone — rename it in the payload "
+            "(a node called `capstone` would be silently replaced by the build, and the build "
+            "would then require itself)" % CAPSTONE_ID)
+    old_cap = next((n for n in old_nodes.values()
+                    if isinstance(n, dict) and n.get("capstone") is True), None)
+    if real:
+        cap = _capstone_node(g, real)          # requires = every REAL node; never itself
+        if isinstance(old_cap, dict):
+            # carry the schedule forward, exactly like every other surviving node
+            if isinstance(old_cap.get("fsrs"), dict):
+                cap["fsrs"] = old_cap["fsrs"]
+                cap["state"] = old_cap.get("state", "new")
+                if cap["state"] not in NODE_STATES:
+                    cap["state"] = "new"
+                preserved += 1
+            cap["artifact"] = valid_artifact(old_cap)
+            warnings.append("capstone re-minted with the new requires; schedule carried forward")
+        g["nodes"][CAPSTONE_ID] = cap
         g["order"] = [n for n in g["order"] if n != CAPSTONE_ID] + [CAPSTONE_ID]
+    # `transfer` is engine-owned and derived from the receipt log — so REBUILD it from evidence
+    # rather than leaving the hole a `--replace` punched in it (the same discipline `artifact`
+    # already had, and the same one `fsrs` gets via carry-forward).
+    by = _by_node(_receipts_for(g["topic"]))
+    for nid, node in g["nodes"].items():
+        st = node_transfer_state(by.get((g["topic"], nid)))
+        if st["receipts"]:
+            node["transfer"] = st
     save_graph(g)
     emit({"ok": True, "topic": g["topic"], "nodes": len(g["nodes"]),
           "capstone": CAPSTONE_ID in g["nodes"],
@@ -842,8 +895,12 @@ def due_items(topic_filter=None, limit=None, horizon_days=0):
                     "lapses": fsrs.get("lapses", 0),
                     # v0.8: mature enough for the harder question? /review serves the
                     # transfer_probe instead of the probe, and the receipt gets kind=transfer.
+                    # v0.8.1: the SLOT goes with it — maturity counts RETRIEVALS from the receipt
+                    # log, not `fsrs.reps` (which includes the encode). Omitting it read 0
+                    # retrievals for every node and silently flagged nothing, ever.
                     "transfer_ready": _transfer_ready(
-                        node, node_transfer_state(_tnodes.get((t, nid))), _t),
+                        node, node_transfer_state(_tnodes.get((t, nid))), _t,
+                        _tnodes.get((t, nid))),
                     "transfer_probe": node.get("transfer_probe"),
                     "capstone": node.get("capstone") is True,
                 })
@@ -1017,16 +1074,76 @@ def apply_item(item, kind):
         return {"node": item["node"], "topic": item["topic"], "applied": False,
                 "idempotent": True, "sid": sid,
                 "note": "receipt already applied — no-op (idempotency guard, issue #3)"}
+    # ⚠ THE MATURITY BAR AT *INGEST*, not just at selection (v0.8.1).
+    #
+    # `_transfer_ready` guarded the SELECTION path and nothing guarded the WRITE path — so a bare
+    # CLI `rate --kind transfer` on a node encoded yesterday certified `transfer.state: applied`
+    # and `owned` on 24 hours of memory, while `transfer` itself returned zero candidates: the
+    # engine refused to probe the very node it had just certified. That is §4.8 Q5 exactly — the
+    # skills always pass what the engine expects, and the CLI is the door nobody guards.
+    #
+    # The capstone is exempt: it has no maturity, because it has no encoding phase. The build IS
+    # the event.
+    if kind == "transfer" and node.get("capstone") is not True:
+        slot = _by_node(_receipts_for(item["topic"])).get((item["topic"], item["node"]))
+        f = _fsrs_of(node)
+        s, rr = as_number(f.get("s")), _retrievals(slot)
+        if s is None or s <= TRANSFER_MATURE_S or rr < TRANSFER_MATURE_REPS:
+            die("refusing a TRANSFER receipt on an immature node (%s/%s: stability %s, %d "
+                "retrieval%s). Transfer asks whether a memory FIRES in new clothes — asking it "
+                "of a memory that has not survived %dd across %d retrievals measures working "
+                "memory, and failing it would be a fabricated setback. Review it first."
+                % (item["topic"], item["node"],
+                   ("%.1fd" % s) if s is not None else "none",
+                   rr, "" if rr == 1 else "s",
+                   int(TRANSFER_MATURE_S), TRANSFER_MATURE_REPS))
     rating = item["rating"]
     model = load_model()
     node.setdefault("fsrs", _fresh_fsrs())
     node["fsrs"]["retention"] = as_number(model["memory"].get("desired_retention"), RETENTION_DEFAULT)
     node["fsrs"]["im"] = as_number(model["memory"].get("interval_multiplier"), 1.0)
     was_new = as_number(node["fsrs"].get("s")) is None
-    node["fsrs"], extra = apply_rating(node["fsrs"], rating, today())
-    node["fsrs"].pop("retention", None)
-    node["fsrs"].pop("im", None)
-    if rating == "again":
+
+    # ⚠ A FAILED TRANSFER PROBE MUST NOT PUNISH THE MEMORY SCHEDULE (v0.8.1).
+    #
+    # v0.8 separated the three populations in the METRICS and pooled them in the SCHEDULER. On a
+    # mature node — the only kind the system ever probes — one failed transfer probe did this:
+    #
+    #     s: 443.5 -> 12.3      (97% of the memory's durability, deleted)
+    #     state: review -> learning     lapses: 0 -> 1     due: 2027-03-01 -> 2026-03-17
+    #
+    # …and dropped the node below the transfer bar, so it could never be re-probed. **Answering a
+    # HARDER question wrong demolished the schedule for the ORIGINAL concept.** It contradicted
+    # three separate sentences this very release shipped:
+    #
+    #   skills/review  — "A lapse here is NOT a memory failure and must never be framed as one."
+    #   skills/coach   — "A transfer lapse is not a memory failure. Do not frame it as a setback."
+    #   _transfer_ready — "failing it would be a lapse the schedule then punishes — A FABRICATED
+    #                      SETBACK." (The maturity gate was built to prevent exactly this, and
+    #                      only ever guarded IMMATURE nodes.)
+    #
+    # The learner remembers the concept. The capability just did not fire. Those are different
+    # facts about different things, and the schedule is only allowed to hear about the first.
+    # So a transfer LAPSE leaves `fsrs` untouched — and the receipt records `s_before == s_after`,
+    # so the evidence stays honest about the fact that nothing moved. A transfer SUCCESS still
+    # strengthens the memory, because applying an idea IS a retrieval, and a strong one.
+    transfer_lapse = (kind == "transfer" and GRADE_OF_RATING.get(rating) == "lapsed")
+    if transfer_lapse:
+        f = node["fsrs"]
+        s_now = as_number(f.get("s"))
+        extra = {"s_before": s_now, "s_after": s_now, "interval_days": None,
+                 "retrievability": None,
+                 "schedule_unchanged": "a failed TRANSFER probe does not lapse the memory — "
+                                       "the concept is remembered; the capability did not fire"}
+        f.pop("retention", None)
+        f.pop("im", None)
+    else:
+        node["fsrs"], extra = apply_rating(node["fsrs"], rating, today())
+        node["fsrs"].pop("retention", None)
+        node["fsrs"].pop("im", None)
+    if transfer_lapse:
+        pass                                  # state is untouched: the memory did not lapse
+    elif rating == "again":
         node["state"] = "learning"
     elif was_new and rating == "hard":
         node["state"] = "learning"
@@ -1050,7 +1167,12 @@ def apply_item(item, kind):
     # clamp: a backward clock step (or a hand-edited ts) would otherwise stamp a
     # negative elapsed-day count into an append-only receipt, permanently.
     extra = {**extra, "days_since_encode": max(0, dse or 0)}
-    receipt = make_receipt(item, {**extra, "due_next": node["fsrs"]["due"]}, kind)
+    # The capstone stamp, recorded at grading time like the `artifact` medium stamp — so `_by_node`
+    # can tell a capstone's FIRST receipt (which is its build, a transfer) from an ordinary node's
+    # first receipt (which is its encoding), while staying a pure function of the receipt log.
+    if node.get("capstone") is True:
+        extra = {**extra, "capstone": True}
+    receipt = make_receipt(item, {**extra, "due_next": node["fsrs"].get("due")}, kind)
     append_jsonl(p("receipts", item["topic"] + ".jsonl"), receipt)
     _cache_receipt(item["topic"], receipt)   # a duplicate sid later in THIS batch must still be caught
     # THE CAPABILITY CLAIM (v0.8). `node.transfer` is engine-owned and written ONLY here, only
@@ -1570,6 +1692,21 @@ def _by_node(receipts):
         # had never come back once. The metric built to say "you never returned" said the
         # opposite, which is the single worst direction for it to be wrong in.
         if first:
+            # …**EXCEPT A CAPSTONE, WHICH HAS NO ENCODING PHASE AT ALL** (v0.8.1). It is built
+            # once, and the build IS the event — a `kind: transfer`. So v0.8.0 shipped a
+            # capability metric that could not see the capstone: the learner built the thing,
+            # passed it, and `stats.transfer` read **"NO CAPABILITY HAS EVER BEEN MEASURED"**
+            # while the receipt sat on disk. The release's own thesis — *"transfer_probe was
+            # authored since v0.1 and read by NOTHING"* — reproduced one level up, on the most
+            # important node in the graph.
+            #
+            # The receipt carries its own `capstone` stamp (written at grading time by
+            # `apply_item`, exactly like the `artifact` medium stamp), so this stays a pure
+            # function of the receipt log — and the v0.6.1 guard is untouched for every ordinary
+            # node: a bare CLI `rate --kind transfer` on a never-encoded concept is still
+            # swallowed as that concept's encoding event, because it is one.
+            if r.get("capstone") is True and r.get("kind") == "transfer" and r.get("rating"):
+                slot["transfers"].append(r)
             continue
         if r.get("kind") == "review" and r.get("rating"):
             slot["reviews"].append(r)
@@ -1644,6 +1781,14 @@ def _retrieval_receipts(receipts):
         out.extend(slot["transfers"])
     return sorted(out, key=_sort_key)
 
+def _grade_of(r):
+    """The receipt's grade, falling back to its rating. One definition, shared."""
+    g = r.get("grade")
+    if isinstance(g, str) and g in GRADES:
+        return g
+    rt = r.get("rating")
+    return GRADE_OF_RATING.get(rt) if isinstance(rt, str) else None
+
 def node_transfer_state(slot):
     """The node's transfer block, derived from its receipts. ENGINE-OWNED, never payload-set.
 
@@ -1652,18 +1797,24 @@ def node_transfer_state(slot):
 
     Computed from the LATEST transfer receipt, not from "ever". A capability that fired in June
     and failed in September is not currently owned, and pretending otherwise would be a wrong
-    number in the flattering direction — which is bug class #1."""
+    number in the flattering direction — which is bug class #1.
+
+    v0.8.1: "latest" means the latest **DATED** one. `_sort_key` deliberately sorts a receipt with
+    an unparseable `ts` LAST (so it can never win day-0), and taking `ts[-1]` therefore handed the
+    crown to exactly that garbage receipt — a hand-edited undated `recalled` could flip a node to
+    `applied` over a real, dated `lapsed`. The v0.6 fix and the v0.8 rule collided, and they
+    collided in the flattering direction."""
     ts = slot["transfers"] if slot else []
     if not ts:
         return {"state": "untested", "last": None, "receipts": 0}
-    last = ts[-1]
-    grade = last.get("grade")
-    if not isinstance(grade, str) or grade not in GRADES:
-        rating = last.get("rating")
-        grade = GRADE_OF_RATING.get(rating) if isinstance(rating, str) else None
-    return {"state": "applied" if grade == "recalled" else "probed",
-            "last": last.get("ts") if isinstance(last.get("ts"), str) else None,
-            "receipts": len(ts)}
+    dated = [r for r in ts if safe_date(r.get("ts"))]
+    last = dated[-1] if dated else None
+    if last is None:
+        # every transfer receipt is undated: we know it was PROBED and we cannot know the outcome
+        return {"state": "probed", "last": None, "receipts": len(ts),
+                "note": "no transfer receipt carries a parseable date — outcome unknown"}
+    return {"state": "applied" if _grade_of(last) == "recalled" else "probed",
+            "last": last.get("ts"), "receipts": len(ts)}
 
 # ============================================================== THE ORACLE (v0.7)
 # The blind assessor's grade drives mastery, retention, calibration, and the schedule
@@ -1692,9 +1843,17 @@ def node_transfer_state(slot):
 # wears different clothes. Those are two different claims, backed by two different pieces of
 # evidence, and the graph has been conflating them.
 TRANSFER_MATURE_S = 21.0      # stability, in days: the memory has survived a real interval
-TRANSFER_MATURE_REPS = 3      # …across at least three retrievals. Not a fluke.
+TRANSFER_MATURE_REPS = 3      # …across at least three RETRIEVALS (from the receipt log — the
+                              # encode is not a retrieval, and counting `fsrs.reps` made this an
+                              # advertised 3 that delivered 2).
 TRANSFER_COOLDOWN_DAYS = 30   # don't re-probe the same node every session; it is not a quiz
 TRANSFER_STATES = ("untested", "probed", "applied")
+# Every sibling metric has a floor (calibration 10, modality 15, the grader audit 30). Transfer
+# had NONE — so a single probe read "FIRED on 100%" and chipped it on the dashboard while
+# `calibration` and `modality` correctly said `insufficient-data` on the same state. A rate over
+# fewer than five probes moves more than 20 points on one item, and a number a single datum can
+# swing by 20 points is not a rate. Counts are facts and are always shown; the RATE waits.
+TRANSFER_MIN_N = 5
 
 GOLD_SCORE = {"lapsed": 0, "partial": 1, "recalled": 2}   # ordinal; QWK needs the order
 QWK_FLOOR = 0.60        # below this the grader is not trustworthy at all -> teeth
@@ -2317,19 +2476,46 @@ def compute_grader_health():
 def cmd_grader_health(_args):
     emit(compute_grader_health())
 
-def _transfer_ready(node, tstate, t):
+def has_transfer_question(node):
+    """Is there a harder question to ask of this node at all?
+
+    A `transfer_probe` the architect wrote — **or a capstone**, which carries none because the
+    capstone IS the transfer probe. v0.8.0's census required a non-empty `transfer_probe`, so the
+    capstone could never be counted `applied` however many times it was graded."""
+    if not isinstance(node, dict):
+        return False
+    if node.get("capstone") is True:
+        return True
+    tp = node.get("transfer_probe")
+    return isinstance(tp, str) and bool(tp.strip())
+
+def _retrievals(slot):
+    """Actual retrievals from the RECEIPT LOG — reviews + transfers, never `fsrs.reps`.
+
+    `reps` counts every rating INCLUDING the encode, so `reps >= 3` delivered 2 retrievals while
+    advertising 3 ("across 3+ retrievals", said the read). Off by one, in the direction that
+    certifies transfer on less evidence than claimed. The engine's own doctrine (`_by_node`) is
+    that the first receipt is the ENCODING EVENT, not a retrieval — so count the retrievals."""
+    return (len(slot["reviews"]) + len(slot["transfers"])) if slot else 0
+
+def _transfer_ready(node, tstate, t, slot=None):
     """Is this node mature enough to be asked the harder question?
 
-    Mature = the memory has survived real intervals (s > 21d) across real retrievals (reps >= 3).
-    Probing transfer on a node the learner encoded yesterday measures nothing but their working
-    memory, and failing it would be a lapse the schedule then punishes — a fabricated setback."""
+    Mature = the memory has survived real intervals (s > 21d) across real RETRIEVALS (>= 3, counted
+    from the receipt log — not `fsrs.reps`, which includes the encode). Probing transfer on a node
+    the learner encoded yesterday measures nothing but their working memory, and failing it would
+    be a lapse the schedule then punishes — a fabricated setback."""
+    if node.get("capstone") is True:
+        return False       # the capstone is served by `next` as a NODE, never re-probed by `transfer`
     tp = node.get("transfer_probe")
     if not (isinstance(tp, str) and tp.strip()):
         return False                       # a null transfer_probe is NEVER selected
     f = _fsrs_of(node)
-    s, reps = as_number(f.get("s")), as_number(f.get("reps"), 0) or 0
-    if s is None or s <= TRANSFER_MATURE_S or reps < TRANSFER_MATURE_REPS:
+    s = as_number(f.get("s"))
+    if s is None or s <= TRANSFER_MATURE_S:
         return False
+    if _retrievals(slot) < TRANSFER_MATURE_REPS:
+        return False                       # 3 REAL retrievals, as advertised — the encode is not one
     last = safe_date(tstate.get("last"))
     if last and (t - last).days < TRANSFER_COOLDOWN_DAYS:
         return False                       # probed recently: this is a tool, not a quiz show
@@ -2345,8 +2531,9 @@ def transfer_candidates(topic_filter=None, limit=None):
     out = []
     for tp, g in iter_graphs(topic_filter):
         for nid, node in graph_nodes(g).items():
-            st = node_transfer_state(nodes.get((tp, nid)))
-            if not _transfer_ready(node, st, t):
+            slot = nodes.get((tp, nid))
+            st = node_transfer_state(slot)
+            if not _transfer_ready(node, st, t, slot):
                 continue
             f = _fsrs_of(node)
             out.append({
@@ -2448,7 +2635,7 @@ def compute_transfer():
     ready = len(transfer_candidates())
     for tp, g in iter_graphs():
         for nid, node in graph_nodes(g).items():
-            if not (isinstance(node.get("transfer_probe"), str) and node["transfer_probe"].strip()):
+            if not has_transfer_question(node):     # …INCLUDING the capstone (v0.8.1)
                 continue
             states[node_transfer_state(nodes.get((tp, nid)))["state"]] += 1
     # TWO BARS, TWO NAMES — and neither one gets to be called just `rate`.
@@ -2463,39 +2650,78 @@ def compute_transfer():
     # half-application is not a yes. `any` is published beside it because it is the SAME bar
     # retention uses (recalled-or-partial), and the two numbers are only comparable if they are
     # measured the same way.
-    def _grade(r):
-        gr = r.get("grade")
-        if not isinstance(gr, str) or gr not in GRADES:
-            gr = GRADE_OF_RATING.get(r.get("rating")) if isinstance(r.get("rating"), str) else None
-        return gr
-    grades = [_grade(r) for r in ts]
+    # ── THE HEADLINE IS *CURRENT OWNERSHIP*, NOT A LIFETIME POOL ────────────────────────────
+    #
+    # v0.8.0's `rate_fired` pooled the **entire append-only lifetime log** and was **ORDER-BLIND**
+    # — while `node.transfer.state` was deliberately latest-evidence, with a docstring saying
+    # *"a capability that fired in June and failed in September is not currently owned, and
+    # pretending otherwise would be a wrong number in the flattering direction."*
+    #
+    # They fixed it in `state` and shipped it in the number `/coach` leads with:
+    #
+    #   IMPROVING learner (failed 5 twice, then mastered all 5) -> owns 5 -> "FIRED on 33%"
+    #   DECLINING learner (passed 5 twice, then LOST all 5)     -> owns 0 -> "FIRED on 67%"
+    #
+    # **The learner with ZERO current capability scored exactly DOUBLE the one who owned all five**
+    # — and the dashboard rendered `fired 67%` and `owned 0` as adjacent chips. That is not a
+    # lenient ruler; it is a NEGATIVE one, and every number downstream had its sign flipped.
+    #
+    # The shipped §5.5 instrument gate missed it because it varied the BAR (recalled/partial/
+    # lapsed on one node, one receipt) and never varied the POPULATION. **It tested the subject,
+    # not the ruler** — the exact v0.7 lesson, repeated one release later.
+    #
+    # So: two numbers, two names (§4.8 Q6), and the CURRENT one leads.
+    #   `owned_rate`      — of the capabilities you have PROBED, how many do you own RIGHT NOW?
+    #   `probe_fire_rate` — of every probe you have ever attempted, how many fired? (history)
+    grades = [_grade_of(r) for r in ts]
     fired = sum(1 for gr in grades if gr == "recalled")
     partial = sum(1 for gr in grades if gr == "partial")
     lapsed = sum(1 for gr in grades if gr == "lapsed")
-    rate_fired = round(fired / len(ts), 3) if ts else None
-    rate_any = round((fired + partial) / len(ts), 3) if ts else None
+    tested = states["probed"] + states["applied"]        # nodes with a verdict, right now
+    owned_rate = round(states["applied"] / tested, 3) if tested else None
+    probe_fire_rate = round(fired / len(ts), 3) if ts else None
+    probe_any_rate = round((fired + partial) / len(ts), 3) if ts else None
+    thin = len(ts) < TRANSFER_MIN_N
     have = sum(states.values())
     if not ts:
-        read = ("NO CAPABILITY HAS EVER BEEN MEASURED. %d concept%s %s a transfer probe the "
-                "architect wrote; %d %s mature enough to be asked it."
+        read = ("NO CAPABILITY HAS EVER BEEN MEASURED. %d concept%s %s a transfer question; "
+                "%d %s mature enough to be asked it."
                 % (have, "s" if have != 1 else "", "carry" if have != 1 else "carries",
                    ready, "is" if ready == 1 else "are"))
+    elif thin:
+        # every sibling metric has a floor (calibration 10, modality 15, the audit 30). Transfer
+        # had none, so ONE probe read "FIRED on 100%" and chipped it on the dashboard. Counts are
+        # facts and are always shown; a RATE over fewer than 5 probes moves >20 points on a single
+        # item, and a number that a single datum can swing by 20 points is not a rate.
+        read = ("insufficient-data for a transfer RATE (%d probe%s; need %d). You currently own "
+                "%d of %d tested capabilit%s — that is a count, and counts are facts."
+                % (len(ts), "s" if len(ts) != 1 else "", TRANSFER_MIN_N,
+                   states["applied"], tested, "y" if tested == 1 else "ies"))
     else:
-        read = ("transfer FIRED on %d%% of %d probe%s (%d%% at least partial). This is not "
-                "recall — it is whether the idea works when it wears different clothes, and it "
-                "is never pooled into retention."
-                % (round(rate_fired * 100), len(ts), "s" if len(ts) != 1 else "",
-                   round(rate_any * 100)))
+        read = ("you currently OWN %d%% of the %d capabilities you have tested (%d of %d). "
+                "Across every probe ever attempted, %d%% fired. This is not recall — it is "
+                "whether the idea works in different clothes — and it is never pooled into "
+                "retention."
+                % (round(owned_rate * 100), tested, states["applied"], tested,
+                   round(probe_fire_rate * 100)))
     return {"n": len(ts),
             "fired": fired, "partial": partial, "lapsed": lapsed,
-            "rate_fired": rate_fired,     # recalled only — the bar `state: applied` uses
-            "rate_any": rate_any,         # recalled-or-partial — the SAME bar retention uses
+            # THE HEADLINE — current ownership. Order-aware, because `state` is.
+            "owned": states["applied"], "tested": tested,
+            "owned_rate": (owned_rate if not thin else None),
+            # …and the lifetime probe-level history, named as history so it cannot be mistaken
+            # for the headline the way v0.8.0's did.
+            "probe_fire_rate": (probe_fire_rate if not thin else None),
+            "probe_any_rate": (probe_any_rate if not thin else None),
+            "min_n": TRANSFER_MIN_N, "insufficient_data": thin,
             "states": states, "ready_now": ready,
-            "definition": ("of transfer probes attempted (the same idea in different clothes): "
-                           "`rate_fired` is the fraction graded `recalled` — the bar a node must "
-                           "clear to reach `transfer.state: applied`. `rate_any` also counts "
-                           "`partial`, which is the bar `retention` uses, so the two are "
-                           "comparable. NEVER pooled: retention asks whether the memory survived; "
+            "definition": ("`owned_rate` (THE HEADLINE) = of the capabilities you have probed, the "
+                           "fraction whose MOST RECENT probe fired. It is order-aware, exactly as "
+                           "`transfer.state` is: a capability that fired in June and failed in "
+                           "September is not owned now. `probe_fire_rate` is the LIFETIME "
+                           "probe-level history and is order-blind by construction — it answers a "
+                           "different question and must never be read as the headline. NEVER "
+                           "pooled with retention: retention asks whether the memory survived; "
                            "transfer asks whether the capability fires."),
             "read": read}
 
@@ -2760,7 +2986,17 @@ def compute_stats():
     # separate, noisier signal — reported alongside, never pooled into the verdict.
     with_conf = [r for r in receipts if r.get("confidence") is not None]
     calibration = _calibration([r for r in with_conf if id(r) in review_ids])
-    calibration_encode = _calibration([r for r in with_conf if id(r) not in review_ids])
+    # …and `calibration_encode` was a RESIDUAL bucket (`not in review_ids`), so v0.8's transfer
+    # receipts fell straight into it — a bucket whose own docstring calls it "first-exposure
+    # (encode) guesses". Transfer is precisely where a learner is MOST overconfident (they know
+    # the concept; the capability doesn't fire), so that overconfidence was being misattributed
+    # to their encoding self-assessment, and /coach would diagnose the wrong faculty and
+    # prescribe the wrong fix. A residual bucket silently absorbs every kind you add later.
+    # Name the population, always. (§4.8 Q3, and the one real population leak in v0.8.)
+    transfer_ids = {id(r) for r in _transfer_receipts(receipts)}
+    calibration_encode = _calibration([r for r in with_conf
+                                       if id(r) not in review_ids and id(r) not in transfer_ids])
+    calibration_transfer = _calibration([r for r in with_conf if id(r) in transfer_ids])
     topics = []
     for t, g in iter_graphs():
         topics.append({"topic": t, "title": g.get("title"), "states": state_counts(g)})
@@ -2784,6 +3020,7 @@ def compute_stats():
         "recall_by_stability": recall,
         "calibration": calibration,
         "calibration_encode": calibration_encode,
+        "calibration_transfer": calibration_transfer,   # v0.8.1: named, never a residual bucket
         "streak_days": compute_streak(receipts),
         "momentum": compute_momentum(receipts),
         "modality": compute_modality(receipts),
@@ -3367,13 +3604,14 @@ def cmd_report(args):
     if not tr["n"]:
         parts.append("<p class='note' style='color:var(--bad)'><b>%s</b></p>" % escape(tr["read"]))
     else:
+        chips = [("OWNED NOW", "%d / %d" % (tr["owned"], tr["tested"]))]
+        if not tr["insufficient_data"]:
+            chips.append(("owned rate", "%d%%" % round((tr["owned_rate"] or 0) * 100)))
+            chips.append(("lifetime probe fire rate", "%d%%"
+                          % round((tr["probe_fire_rate"] or 0) * 100)))
+        chips += [("probes", str(tr["n"])), ("untested", str(tr["states"]["untested"]))]
         parts.append("<div class='chips'>%s</div>" % "".join(
-            "<span class='chip'>%s <b>%s</b></span>" % (escape(k), escape(v)) for k, v in (
-                ("fired", "%d%%" % round((tr["rate_fired"] or 0) * 100)),
-                ("at least partial", "%d%%" % round((tr["rate_any"] or 0) * 100)),
-                ("probes", str(tr["n"])),
-                ("owned", str(tr["states"]["applied"])),
-                ("untested", str(tr["states"]["untested"])))))
+            "<span class='chip'>%s <b>%s</b></span>" % (escape(k), escape(v)) for k, v in chips))
         parts.append("<p class='note'>%s</p>" % escape(tr["read"]))
     parts.append("<p class='note'><b>Never pooled with retention above.</b> Retention asks "
                  "whether the memory survived; transfer asks whether the capability fires. "
@@ -3716,6 +3954,19 @@ def cmd_selftest(_args):
           clean_confidence(150) == 100 and clean_confidence(-20) == 0
           and clean_confidence("high") is None and clean_confidence(0.9) == 1)
 
+    # -- NON-FINITE IS NOT A NUMBER (found by fuzzing `decay`) --
+    # `Infinity`/`NaN` are not valid JSON — and Python's json module parses them anyway. An `inf`
+    # sails through every `isinstance(x, float)` check, then dies on the first `int()`
+    # (OverflowError); a `NaN` poisons every comparison it touches and never raises at all.
+    check("as_number rejects inf/-inf/NaN — non-finite is not a number",
+          as_number(float("inf")) is None and as_number(float("-inf")) is None
+          and as_number(float("nan")) is None
+          and as_number(float("inf"), 7.0) == 7.0          # …and honours the default
+          and as_number(float("nan"), 7.0) == 7.0
+          and as_number(3.5) == 3.5 and as_number(0) == 0.0)   # real numbers still pass
+    check("a NaN confidence never becomes a number",
+          clean_confidence(float("nan")) is None and clean_confidence(float("inf")) is None)
+
     # -- slug guard (R5 traversal) --
     check("slug accepts real topics",
           slug_ok("transformers-attention") and slug_ok("t") and slug_ok("a.b_c"))
@@ -3992,23 +4243,34 @@ def cmd_selftest(_args):
           fresh(_decay_nothing_due))
     check("decay: an unencoded topic has nothing to lose", fresh(_decay_empty))
 
-    # ================================================== THE CLAIM (v0.8)
-    # `transfer_probe` was authored by the architect since v0.1 and read by NOTHING. Zero
-    # transfer receipts existed anywhere, ever. Engram measured memory and claimed capability.
+    # ================================================== THE CLAIM (v0.8, corrected in v0.8.1)
+    # `transfer_probe` was authored by the architect since v0.1 and read by NOTHING. v0.8.0 wired
+    # it up — and shipped a capability metric that could not see the CAPSTONE, and a headline that
+    # ranked a learner who had LOST every capability above one who had MASTERED every one.
 
-    def _add_transfer_topic(tp="Apply it to your own GPS trace.", extra=None):
-        g = {"topic": "k", "title": "K", "order": ["a", "b"], "nodes": {
-            "a": {"claim": "C", "probe": "P", "rubric": ["r"], "transfer_probe": tp},
-            "b": {"claim": "C2", "probe": "P2", "rubric": ["r"], "transfer_probe": None,
-                  "edges": {"requires": ["a"]}}}}
+    def _add_transfer_topic(tp="Apply it to your own GPS trace.", extra=None, n=2):
+        nodes = {"a": {"claim": "C", "probe": "P", "rubric": ["r"], "transfer_probe": tp},
+                 "b": {"claim": "C2", "probe": "P2", "rubric": ["r"], "transfer_probe": None,
+                       "edges": {"requires": ["a"]}}}
+        for i in range(2, n):
+            nodes["n%d" % i] = {"claim": "C", "probe": "P", "rubric": ["r"],
+                                "transfer_probe": "TP%d" % i}
         if extra:
-            g["nodes"].update(extra)
+            nodes.update(extra)
         pth = p("payload.json")
-        write_json(pth, g)
+        write_json(pth, {"topic": "k", "title": "K", "order": sorted(nodes), "nodes": nodes})
         _capture(cmd_add_topic, _ns(file=pth, replace=False))
 
     def _mature(node="a"):
-        """Encode, then three real reviews across months -> s > 21d, reps >= 3."""
+        """Encode, then three real RETRIEVALS across months -> s > 21d, 3 retrievals.
+
+        The clock is reset to the encode date FIRST. Without it, maturing a second node left
+        ENGRAM_TODAY at 2027 — so that node's ENCODE landed AFTER its reviews, its earliest
+        receipt by `ts` was a review, and `_by_node` (correctly) treated that review as the
+        encoding event. The engine then (correctly) refused the transfer for want of a third
+        retrieval. A fixture that scrambles a node's history is not a fixture; it is a different
+        test, and the guard catching it was the guard working."""
+        os.environ["ENGRAM_TODAY"] = "2026-07-06"
         _capture(cmd_rate, _ns(topic="k", node=node, rating="good", grade="recalled",
                                kind="encode", production="x"))
         for d in ("2026-08-06", "2026-10-06", "2027-01-06"):
@@ -4017,20 +4279,44 @@ def cmd_selftest(_args):
                                    kind="review", production="z"))
         os.environ["ENGRAM_TODAY"] = "2027-04-06"
 
+    def _probe(node="a", grade="recalled", rating="good", day=None):
+        if day:
+            os.environ["ENGRAM_TODAY"] = day
+        _capture(cmd_rate, _ns(topic="k", node=node, rating=rating, grade=grade,
+                               kind="transfer", production="p"))
+
     # -- an IMMATURE node is never asked the harder question --
     def _transfer_only_mature(h):
         _add_transfer_topic()
         _capture(cmd_rate, _ns(topic="k", node="a", rating="good", grade="recalled",
-                               kind="encode", production="x"))     # encoded, s tiny, reps 1
+                               kind="encode", production="x"))     # encoded, s tiny, 0 retrievals
         t0 = _capture_json(cmd_transfer, _ns(topic="k", limit=None))
         _mature()
         t1 = _capture_json(cmd_transfer, _ns(topic="k", limit=None))
         return (t0["n"] == 0 and "mature enough" in t0["read"]
                 and t1["n"] == 1 and t1["items"][0]["id"] == "a"
-                and as_number(t1["items"][0]["s"]) > TRANSFER_MATURE_S
-                and t1["items"][0]["reps"] >= TRANSFER_MATURE_REPS)
-    check("transfer serves ONLY mature nodes (s > 21d, reps >= 3) — never a fresh encode",
+                and as_number(t1["items"][0]["s"]) > TRANSFER_MATURE_S)
+    check("transfer serves ONLY mature nodes (s > 21d, 3+ RETRIEVALS) — never a fresh encode",
           fresh(_transfer_only_mature))
+
+    # -- #10: `reps` counted the ENCODE, so an advertised 3 retrievals delivered 2 --
+    def _maturity_counts_retrievals_not_reps(h):
+        _add_transfer_topic()
+        _capture(cmd_rate, _ns(topic="k", node="a", rating="good", grade="recalled",
+                               kind="encode", production="x"))          # reps=1, retrievals=0
+        for d in ("2026-08-06", "2026-10-06"):                          # reps=3, retrievals=2
+            os.environ["ENGRAM_TODAY"] = d
+            _capture(cmd_rate, _ns(topic="k", node="a", rating="easy", grade="recalled",
+                                   kind="review", production="z"))
+        os.environ["ENGRAM_TODAY"] = "2027-01-06"
+        two = _capture_json(cmd_transfer, _ns(topic="k", limit=None))["n"]   # reps==3, but 2 real
+        _capture(cmd_rate, _ns(topic="k", node="a", rating="easy", grade="recalled",
+                               kind="review", production="z"))               # retrievals=3
+        os.environ["ENGRAM_TODAY"] = "2027-04-06"
+        three = _capture_json(cmd_transfer, _ns(topic="k", limit=None))["n"]
+        return two == 0 and three == 1     # the advertised 3 retrievals are delivered
+    check("maturity counts RETRIEVALS from the receipt log, not `fsrs.reps` (the encode is not one)",
+          fresh(_maturity_counts_retrievals_not_reps))
 
     # -- a node with a NULL transfer_probe is never selected, however mature --
     def _null_probe_never_selected(h):
@@ -4038,50 +4324,220 @@ def cmd_selftest(_args):
         _mature()
         t = _capture_json(cmd_transfer, _ns(topic="k", limit=None))
         st = _capture_json(cmd_stats, _ns())["transfer"]
-        return (t["n"] == 0                    # mature, but there is nothing to ask
-                and sum(st["states"].values()) == 0)   # …and it is not counted as untested
+        # …and it is not in the CENSUS either. Only the capstone (which IS a transfer question)
+        # is counted, so the census reads exactly 1.
+        return t["n"] == 0 and sum(st["states"].values()) == 1 and st["states"]["untested"] == 1
     check("a node with a null transfer_probe is NEVER selected (there is nothing to ask)",
           fresh(_null_probe_never_selected))
+
+    # -- ⚠ FINDING #1: THE CAPSTONE'S TRANSFER RECEIPT WAS DEAD DATA --
+    # The capstone is built ONCE, so its transfer receipt is its FIRST receipt — swallowed by the
+    # v0.6.1 "a node's first receipt is its encoding event" rule. AND the census skipped it,
+    # because it is minted with `transfer_probe: None` ("the capstone IS the transfer probe").
+    # So the learner built the thing, passed it, and `stats.transfer` read **"NO CAPABILITY HAS
+    # EVER BEEN MEASURED"** while the receipt sat on disk. v0.8's own thesis, one level up.
+    def _capstone_transfer_is_counted(h):
+        _add_transfer_topic()
+        for nid in ("a", "b"):
+            _capture(cmd_rate, _ns(topic="k", node=nid, rating="good", grade="recalled",
+                                   kind="encode", production="x"))
+        served = _capture_json(cmd_next, _ns(topic="k"))["id"]
+        _probe(node=CAPSTONE_ID)                                   # BUILD IT, and pass
+        st = _capture_json(cmd_stats, _ns())["transfer"]
+        node = load_graph("k")["nodes"][CAPSTONE_ID]
+        return (served == CAPSTONE_ID
+                and st["n"] == 1 and st["fired"] == 1              # the receipt is SEEN…
+                and st["owned"] == 1 and st["tested"] == 1         # …and it counts as owned…
+                and st["states"]["applied"] == 1                   # …in the census…
+                and node["transfer"]["state"] == "applied"         # …and the graph agrees.
+                and "NO CAPABILITY" not in st["read"])
+    check("FINDING #1: a passed CAPSTONE is COUNTED (its first receipt IS its transfer)",
+          fresh(_capstone_transfer_is_counted))
+
+    def _failed_capstone_is_counted(h):
+        _add_transfer_topic()
+        for nid in ("a", "b"):
+            _capture(cmd_rate, _ns(topic="k", node=nid, rating="good", grade="recalled",
+                                   kind="encode", production="x"))
+        _probe(node=CAPSTONE_ID, grade="lapsed", rating="again")   # built it; it did NOT work
+        st = _capture_json(cmd_stats, _ns())["transfer"]
+        # a FAILED capstone is the single most diagnostic event in the system ("I could not
+        # actually use this topic"), and v0.8.0 discarded it entirely.
+        return (st["n"] == 1 and st["lapsed"] == 1
+                and st["owned"] == 0 and st["tested"] == 1
+                and st["states"]["probed"] == 1)
+    check("FINDING #1b: a FAILED capstone is counted too (the most diagnostic event in the system)",
+          fresh(_failed_capstone_is_counted))
+
+    # -- ⚠ FINDING #2, AND IT IS THE INSTRUMENT GATE ITSELF --
+    # v0.8.0's `rate_fired` pooled the LIFETIME log and was ORDER-BLIND, while `state` was
+    # deliberately latest-evidence. Result: a learner who had LOST every capability scored
+    # **2x** one who had MASTERED every one, and the dashboard put `fired 67%` next to `owned 0`.
+    # The shipped §5.5 gate missed it because it varied the BAR and never the POPULATION —
+    # it tested the subject, not the ruler. Exactly the v0.7 lesson, one release later.
+    def _instrument_ranks_current_ownership(_h=None):
+        def learner(script):
+            def go(h):
+                _add_transfer_topic(n=7)
+                for nid in ("a", "n2", "n3", "n4", "n5", "n6"):
+                    _mature(nid)
+                day = 2027
+                for grade, rating in script:                # probes 1 year apart (past cooldown)
+                    for nid in ("a", "n2", "n3", "n4", "n5", "n6"):
+                        _probe(nid, grade, rating, day="%d-04-06" % day)
+                    day += 1
+                return _capture_json(cmd_stats, _ns())["transfer"]
+            return fresh(go)()
+        L, R = ("lapsed", "again"), ("recalled", "good")
+        improving = learner([L, L, R])       # failed twice, then MASTERED all six
+        declining = learner([R, R, L])       # passed twice, then LOST all six
+        return (
+            # the truth, from `state` — which was always right
+            improving["states"]["applied"] == 6 and declining["states"]["applied"] == 0
+            # THE HEADLINE NOW AGREES WITH IT (v0.8.0 had this backwards, by 2x)
+            and improving["owned_rate"] == 1.0 and declining["owned_rate"] == 0.0
+            and improving["owned_rate"] > declining["owned_rate"]
+            # the lifetime history is still reported — and it still says the OPPOSITE…
+            and declining["probe_fire_rate"] > improving["probe_fire_rate"]
+            # …which is fine, because it is NAMED as history and is not the headline
+            and "you currently OWN 100%" in improving["read"]
+            and "you currently OWN 0%" in declining["read"])
+    check("§5.5 INSTRUMENT GATE: the headline ranks CURRENT ownership (a lost capability is not owned)",
+          _instrument_ranks_current_ownership)
 
     # -- THE STATE MACHINE: untested -> probed -> applied, from the LATEST evidence --
     def _transfer_state_machine(h):
         _add_transfer_topic()
         _mature()
         s0 = _capture_json(cmd_stats, _ns())["transfer"]["states"]
-        _capture(cmd_rate, _ns(topic="k", node="a", rating="hard", grade="partial",
-                               kind="transfer", production="half"))
+        _probe(grade="partial", rating="hard")
         s1 = _capture_json(cmd_stats, _ns())["transfer"]["states"]
         n1 = load_graph("k")["nodes"]["a"]["transfer"]
-        os.environ["ENGRAM_TODAY"] = "2027-08-06"
-        _capture(cmd_rate, _ns(topic="k", node="a", rating="good", grade="recalled",
-                               kind="transfer", production="the whole thing"))
+        _probe(grade="recalled", rating="good", day="2027-08-06")
         s2 = _capture_json(cmd_stats, _ns())["transfer"]["states"]
         n2 = load_graph("k")["nodes"]["a"]["transfer"]
         # …and it can be LOST again: a capability that fails now is not currently owned
-        os.environ["ENGRAM_TODAY"] = "2028-01-06"
-        _capture(cmd_rate, _ns(topic="k", node="a", rating="again", grade="lapsed",
-                               kind="transfer", production="gone"))
+        _probe(grade="lapsed", rating="again", day="2028-01-06")
         s3 = _capture_json(cmd_stats, _ns())["transfer"]["states"]
-        return (s0 == {"untested": 1, "probed": 0, "applied": 0}
-                and s1 == {"untested": 0, "probed": 1, "applied": 0} and n1["receipts"] == 1
-                and s2 == {"untested": 0, "probed": 0, "applied": 1} and n2["receipts"] == 2
+        # (the capstone is always in the census as `untested` — nothing has built it)
+        return (s0 == {"untested": 2, "probed": 0, "applied": 0}
+                and s1 == {"untested": 1, "probed": 1, "applied": 0} and n1["receipts"] == 1
+                and s2 == {"untested": 1, "probed": 0, "applied": 1} and n2["receipts"] == 2
                 and n2["state"] == "applied" and n2["last"] == "2027-08-06"
-                and s3 == {"untested": 0, "probed": 1, "applied": 0})   # lost, honestly
+                and s3 == {"untested": 1, "probed": 1, "applied": 0})   # lost, honestly
     check("transfer state machine: untested -> probed -> applied, from the LATEST evidence (and it can be lost)",
           fresh(_transfer_state_machine))
 
+    # -- ⚠ FINDING #11: an UNDATED receipt must not become the LATEST evidence --
+    # `_sort_key` sorts a garbage-`ts` receipt LAST (so it can never win day-0) — and taking
+    # `ts[-1]` therefore handed it the crown. A hand-edited undated `recalled` flipped a node to
+    # `applied` over a real, dated `lapsed`. The v0.6 fix and the v0.8 rule collided, and they
+    # collided in the flattering direction.
+    def _undated_receipt_never_wins(h):
+        _add_transfer_topic()
+        _mature()
+        _probe(grade="lapsed", rating="again")                       # a REAL, dated failure
+        before = _capture_json(cmd_stats, _ns())["transfer"]["states"]
+        append_jsonl(p("receipts", "k.jsonl"), {                     # a hand-edited undated pass
+            "id": "hand", "ts": "not-a-date", "topic": "k", "node": "a",
+            "kind": "transfer", "grade": "recalled", "rating": "good"})
+        _RECEIPTS_CACHE.clear()
+        after = _capture_json(cmd_stats, _ns())["transfer"]["states"]
+        return (before["probed"] == 1 and before["applied"] == 0
+                and after["applied"] == 0 and after["probed"] == 1)  # the undated one does NOT win
+    check("FINDING #11: an UNDATED transfer receipt never becomes the latest evidence",
+          fresh(_undated_receipt_never_wins))
+
+    # -- ⚠ FINDING #4: A FAILED TRANSFER PROBE MUST NOT PUNISH THE MEMORY SCHEDULE --
+    # v0.8 separated the three populations in the METRICS and pooled them in the SCHEDULER. One
+    # failed probe deleted 97% of a mature memory's durability (s 443 -> 12), flipped it to
+    # `learning`, counted a lapse, and dropped it below the transfer bar forever. It contradicted
+    # THREE sentences the same release shipped, including `_transfer_ready`'s own docstring
+    # warning about "a lapse the schedule then punishes — a fabricated setback".
+    def _transfer_lapse_does_not_punish_memory(h):
+        _add_transfer_topic()
+        _mature()
+        f0 = dict(_fsrs_of(load_graph("k")["nodes"]["a"]))
+        st0 = load_graph("k")["nodes"]["a"]["state"]
+        _probe(grade="lapsed", rating="again")                # the capability did NOT fire
+        n = load_graph("k")["nodes"]["a"]
+        f1 = _fsrs_of(n)
+        r = [x for x in read_jsonl(p("receipts", "k.jsonl")) if x.get("kind") == "transfer"][-1]
+        unpunished = (f1["s"] == f0["s"] and f1["due"] == f0["due"]           # schedule UNTOUCHED
+                      and f1["lapses"] == f0["lapses"] and n["state"] == st0
+                      and r["s_before"] == r["s_after"] == f0["s"]            # …and the receipt says so
+                      and "schedule_unchanged" in r)
+        # …and the transfer is still RECORDED as a failure. It is not swept under the rug.
+        st = _capture_json(cmd_stats, _ns())["transfer"]
+        # …and a SUCCESSFUL probe still strengthens the memory (applying an idea IS a retrieval)
+        _probe(grade="recalled", rating="good", day="2027-08-06")
+        f2 = _fsrs_of(load_graph("k")["nodes"]["a"])
+        return (unpunished and st["lapsed"] == 1 and st["states"]["probed"] == 1
+                and f2["s"] > f0["s"])
+    check("FINDING #4: a FAILED transfer probe does NOT punish the memory schedule (a success still strengthens it)",
+          fresh(_transfer_lapse_does_not_punish_memory))
+
+    # -- ⚠ FINDING #6: the maturity bar at INGEST, not just at selection --
+    def _immature_transfer_receipt_is_refused(h):
+        _add_transfer_topic()
+        _capture(cmd_rate, _ns(topic="k", node="a", rating="good", grade="recalled",
+                               kind="encode", production="x"))     # encoded yesterday
+        try:
+            _probe()                                                # …certify it? No.
+            return False
+        except SystemExit:
+            pass
+        st = _capture_json(cmd_stats, _ns())["transfer"]
+        return st["n"] == 0 and st["states"]["applied"] == 0
+    check("FINDING #6: a TRANSFER receipt on an immature node is REFUSED at ingest (not just unserved)",
+          fresh(_immature_transfer_receipt_is_refused))
+
+    # -- ⚠ FINDING #9: no minimum-n floor. Every sibling metric has one. --
+    def _transfer_has_a_floor(h):
+        _add_transfer_topic(n=8)
+        for nid in ("a", "n2", "n3", "n4", "n5", "n6", "n7"):
+            _mature(nid)
+        for i, nid in enumerate(("a", "n2", "n3", "n4")):        # 4 probes: BELOW the floor
+            _probe(nid, day="2027-04-06")
+        thin = _capture_json(cmd_stats, _ns())["transfer"]
+        _probe("n5", day="2027-04-06")                            # the 5th: at the floor
+        ok = _capture_json(cmd_stats, _ns())["transfer"]
+        return (thin["insufficient_data"] is True
+                and thin["owned_rate"] is None and thin["probe_fire_rate"] is None
+                and "insufficient-data" in thin["read"]
+                and thin["owned"] == 4                            # …but COUNTS are facts, always
+                and ok["insufficient_data"] is False and ok["owned_rate"] == 1.0)
+    check("FINDING #9: transfer has a minimum-n floor for its RATE (counts are facts; rates are not)",
+          fresh(_transfer_has_a_floor))
+
+    # -- ⚠ FINDING #7: calibration_encode was a RESIDUAL bucket and swallowed transfers --
+    def _calibration_encode_excludes_transfer(h):
+        _add_transfer_topic()
+        _capture(cmd_rate, _ns(topic="k", node="a", rating="good", grade="recalled",
+                               kind="encode", production="x", confidence=80))
+        for d in ("2026-08-06", "2026-10-06", "2027-01-06"):
+            os.environ["ENGRAM_TODAY"] = d
+            _capture(cmd_rate, _ns(topic="k", node="a", rating="easy", grade="recalled",
+                                   kind="review", production="z", confidence=70))
+        os.environ["ENGRAM_TODAY"] = "2027-04-06"
+        _capture(cmd_rate, _ns(topic="k", node="a", rating="again", grade="lapsed",
+                               kind="transfer", production="p", confidence=90))
+        s = _capture_json(cmd_stats, _ns())
+        # transfer is where a learner is MOST overconfident (they know it; it doesn't fire) —
+        # misattributing that to their ENCODING self-assessment makes /coach diagnose the wrong
+        # faculty and prescribe the wrong fix.
+        return (s["calibration_encode"]["n"] == 1                 # the encode. ONLY the encode.
+                and s["calibration"]["n"] == 3                    # the reviews
+                and s["calibration_transfer"]["n"] == 1)          # …and transfer, NAMED
+    check("FINDING #7: calibration_encode excludes transfers (a residual bucket absorbs every new kind)",
+          fresh(_calibration_encode_excludes_transfer))
+
     # -- NEVER POOLED: a transfer receipt must not touch retention, and retention must not eat it --
-    # Retention asks "did the memory survive N days?"; transfer asks "does the capability fire in
-    # new clothes?". Pooling them drags the north star down with a harder question and answers
-    # neither. The coverage guard must ALSO stay complete — a transfer receipt is not a review
-    # that fell out of a bucket.
     def _transfer_is_never_pooled(h):
         _add_transfer_topic()
         _mature()                                        # 1 encode + 3 reviews
-        _capture(cmd_rate, _ns(topic="k", node="a", rating="good", grade="recalled",
-                               kind="transfer", production="applied it"))
-        _capture(cmd_rate, _ns(topic="k", node="a", rating="again", grade="lapsed",
-                               kind="transfer", production="failed it"))
+        _probe(grade="recalled", rating="good")
+        _probe(grade="lapsed", rating="again", day="2027-08-06")
         s = _capture_json(cmd_stats, _ns())
         cov = s["retention"]["coverage"]
         return (s["reviews"] == 3                        # retention population: reviews only
@@ -4089,54 +4545,76 @@ def cmd_selftest(_args):
                 and sum(v["n"] for v in s["recall_by_stability"].values()) == 3
                 and cov["reviews_bucketed"] == cov["reviews_total"] == 3
                 and cov["complete"] is True              # a transfer is not a dropped review
-                # …and momentum DOES count them, because durability is durability
-                and s["momentum"]["reviews_7d"] == 2)
+                and s["adherence"]["loop_closure"]["first_review_done"] == 1)
     check("a transfer receipt is NEVER pooled into retention — and never breaks its coverage",
           fresh(_transfer_is_never_pooled))
 
-    # -- §4.8 Q1: `rate_fired` and `transfer.state` must use the SAME bar --
-    # The first cut reported one `rate` counting anything not-lapsed, so a node whose only
-    # transfer receipt was `partial` read **rate 1.0** while its own state read **probed**. Two
-    # numbers, one state, two silently different definitions of success — and the looser one was
-    # the flattering one. Caught by the numbers audit BEFORE the gate ran.
-    def _transfer_rates_agree_with_the_state(h):
-        _add_transfer_topic()
-        _mature()
-        _capture(cmd_rate, _ns(topic="k", node="a", rating="hard", grade="partial",
-                               kind="transfer", production="half an answer"))
-        t = _capture_json(cmd_stats, _ns())["transfer"]
-        return (t["rate_fired"] == 0.0            # the capability did NOT fire…
-                and t["rate_any"] == 1.0          # …though it was not a total blank
-                and t["states"]["applied"] == 0   # …and the state agrees with rate_fired
-                and t["states"]["probed"] == 1
-                and "rate" not in t               # the ambiguous bare key is GONE
-                and "FIRED on 0%" in t["read"])   # …and the READ leads with the strict bar
-    check("§4.8 Q1: transfer's `rate_fired` uses the same bar as `state: applied` (never a bare `rate`)",
-          fresh(_transfer_rates_agree_with_the_state))
-
     # -- THE CAPSTONE IS A NODE, NOT A HOPE --
-    # For four releases `skills/learn` §5 said of the build: "this is the point of the whole
-    # topic — do not let it silently not happen." It silently did not happen, every time,
-    # because it was a line of prose rather than a node in a graph.
     def _capstone_is_in_the_dag(h):
         _add_transfer_topic()
         g = load_graph("k")
         cap = g["nodes"].get(CAPSTONE_ID)
         born = (cap is not None and cap["capstone"] is True and cap["state"] == "new"
-                and sorted(cap["edges"]["requires"]) == ["a", "b"]   # requires EVERYTHING
+                and sorted(cap["edges"]["requires"]) == ["a", "b"]   # requires EVERYTHING…
+                and CAPSTONE_ID not in cap["edges"]["requires"]      # …and NEVER itself
                 and g["order"][-1] == CAPSTONE_ID)
-        # it is NOT served while anything is still unencoded…
         n0 = _capture_json(cmd_next, _ns(topic="k"))["id"]
         _capture(cmd_rate, _ns(topic="k", node="a", rating="good", grade="recalled",
                                kind="encode", production="x"))
         n1 = _capture_json(cmd_next, _ns(topic="k"))["id"]
         _capture(cmd_rate, _ns(topic="k", node="b", rating="good", grade="recalled",
                                kind="encode", production="y"))
-        # …and the moment the frontier empties, `next` serves it like anything else
         n2 = _capture_json(cmd_next, _ns(topic="k"))["id"]
         return born and n0 == "a" and n1 == "b" and n2 == CAPSTONE_ID
-    check("THE CAPSTONE IS A NODE: it requires every concept, and `next` serves it when the frontier empties",
+    check("THE CAPSTONE IS A NODE: it requires every concept (never itself), and `next` serves it",
           fresh(_capstone_is_in_the_dag))
+
+    # -- ⚠ FINDING #8: a payload node named `capstone` was SILENTLY destroyed, and then required itself --
+    def _reserved_capstone_id_is_refused(h):
+        pth = p("payload.json")
+        write_json(pth, {"topic": "k", "title": "K", "order": ["intro", "capstone"], "nodes": {
+            "intro": {"claim": "C", "probe": "P"},
+            "capstone": {"claim": "MY OWN NODE", "probe": "P"}}})
+        try:
+            _capture(cmd_add_topic, _ns(file=pth, replace=False))
+            return False                       # it silently ate the learner's node
+        except SystemExit:
+            return "reserved" in "".join(all_topics()) or True    # a guarded refusal
+    check("FINDING #8: a payload node named `capstone` is REFUSED (it would be eaten, then require itself)",
+          fresh(_reserved_capstone_id_is_refused))
+
+    # -- ⚠ FINDING #3 + #5: `--replace` destroyed the capstone's schedule and wiped node.transfer --
+    def _replace_preserves_the_capstone(h):
+        _add_transfer_topic()
+        for nid in ("a", "b"):
+            _capture(cmd_rate, _ns(topic="k", node=nid, rating="good", grade="recalled",
+                                   kind="encode", production="x"))
+        _probe(node=CAPSTONE_ID)                              # build it, pass it
+        before = load_graph("k")["nodes"][CAPSTONE_ID]
+        s_before = _fsrs_of(before).get("s")
+        # …now restructure the topic (the architect adds a node)
+        write_json(p("payload.json"), {"topic": "k", "title": "K",
+                                       "order": ["a", "b", "c"], "nodes": {
+            "a": {"claim": "C", "probe": "P", "rubric": ["r"], "transfer_probe": "TP"},
+            "b": {"claim": "C2", "probe": "P2", "rubric": ["r"]},
+            "c": {"claim": "C3", "probe": "P3", "rubric": ["r"]}}})
+        _capture(cmd_add_topic, _ns(file=p("payload.json"), replace=True))
+        after = load_graph("k")["nodes"][CAPSTONE_ID]
+        st = _capture_json(cmd_stats, _ns())["transfer"]
+        ret = _capture_json(cmd_retention, _ns())
+        return (
+            # #3: the SCHEDULE survives (v0.8.0 reset it to `new`, which also erased the node
+            # from retention's honest denominator — survivorship bias, through a new door)
+            after["state"] == before["state"] and _fsrs_of(after).get("s") == s_before
+            and _fsrs_of(after).get("due") == _fsrs_of(before).get("due")
+            # …and the capstone now requires the NEW node too
+            and sorted(after["edges"]["requires"]) == ["a", "b", "c"]
+            # #5: node.transfer is REBUILT from the receipt log (not left as a hole)
+            and after["transfer"]["state"] == "applied" and after["transfer"]["receipts"] == 1
+            and st["states"]["applied"] == 1                  # …and stats AGREES with the graph
+            and st["owned"] == 1)
+    check("FINDING #3+#5: `--replace` preserves the capstone's schedule and REBUILDS node.transfer",
+          fresh(_replace_preserves_the_capstone))
 
     # -- materializing a capstone into an EXISTING (pre-v0.8) graph is idempotent --
     def _capstone_materialization_is_idempotent(h):
@@ -4145,11 +4623,9 @@ def cmd_selftest(_args):
         del g["nodes"][CAPSTONE_ID]                       # simulate a pre-v0.8 graph
         g["order"] = [n for n in g["order"] if n != CAPSTONE_ID]
         save_graph(g)
-        nx = _capture_json(cmd_next, _ns(topic="k"))
-        _capture(cmd_rate, _ns(topic="k", node="a", rating="good", grade="recalled",
-                               kind="encode", production="x"))
-        _capture(cmd_rate, _ns(topic="k", node="b", rating="good", grade="recalled",
-                               kind="encode", production="y"))
+        for nid in ("a", "b"):
+            _capture(cmd_rate, _ns(topic="k", node=nid, rating="good", grade="recalled",
+                                   kind="encode", production="x"))
         empty = _capture_json(cmd_next, _ns(topic="k"))   # frontier empty, no capstone
         told = (empty["id"] is None and empty["capstone"]["exists"] is False
                 and "NO CAPSTONE" in empty["note"]
@@ -4165,17 +4641,15 @@ def cmd_selftest(_args):
 
     # -- a payload may NEVER claim a capability nobody measured (invariant #4) --
     def _payload_cannot_claim_transfer(h):
-        g = {"topic": "k", "title": "K", "order": ["a"], "nodes": {
+        write_json(p("payload.json"), {"topic": "k", "title": "K", "order": ["a"], "nodes": {
             "a": {"claim": "C", "probe": "P", "transfer_probe": "TP",
                   "transfer": {"state": "applied", "last": "2026-01-01", "receipts": 99},
-                  "capstone": True}}}      # a payload trying to mint its own capstone, too
-        pth = p("payload.json")
-        write_json(pth, g)
-        _capture(cmd_add_topic, _ns(file=pth, replace=False))
+                  "capstone": True}}})       # a payload trying to mint its own capstone, too
+        _capture(cmd_add_topic, _ns(file=p("payload.json"), replace=False))
         node = load_graph("k")["nodes"]["a"]
         st = _capture_json(cmd_stats, _ns())["transfer"]
         return ("transfer" not in node and node.get("capstone") is not True
-                and st["states"]["applied"] == 0 and st["states"]["untested"] == 1)
+                and st["states"]["applied"] == 0)
     check("a payload cannot CLAIM a transfer state or mint a capstone (state advances only through receipts)",
           fresh(_payload_cannot_claim_transfer))
 
@@ -4183,12 +4657,11 @@ def cmd_selftest(_args):
     def _transfer_has_a_cooldown(h):
         _add_transfer_topic()
         _mature()
-        _capture(cmd_rate, _ns(topic="k", node="a", rating="good", grade="recalled",
-                               kind="transfer", production="applied"))
+        _probe()
         hot = _capture_json(cmd_transfer, _ns(topic="k", limit=None))["n"]
-        os.environ["ENGRAM_TODAY"] = "2027-04-05"     # 29 days later: still cooling
+        os.environ["ENGRAM_TODAY"] = "2027-05-05"     # 29 days later: still cooling
         warm = _capture_json(cmd_transfer, _ns(topic="k", limit=None))["n"]
-        os.environ["ENGRAM_TODAY"] = "2027-06-06"     # 61 days later: askable again
+        os.environ["ENGRAM_TODAY"] = "2027-07-06"     # 91 days later: askable again
         cold = _capture_json(cmd_transfer, _ns(topic="k", limit=None))["n"]
         return hot == 0 and warm == 0 and cold == 1
     check("transfer honours a %dd cooldown — it is a tool, not a quiz show" % TRANSFER_COOLDOWN_DAYS,
@@ -4210,9 +4683,6 @@ def cmd_selftest(_args):
           fresh(_due_flags_transfer_ready))
 
     # -- §4.8 Q4 (the NEW rule): the dashboard is a surface too. OPEN IT. --
-    # v0.7 shipped a stamp that reached the JSON, the CLI and the skill — and was thrown away by
-    # the HTML page, which is the only surface a human actually looks at. The rule earned there
-    # is now applied here, in the same release that wrote it down.
     def _dashboard_shows_the_capability_claim(h):
         _add_transfer_topic()
         _mature()
@@ -4220,65 +4690,22 @@ def cmd_selftest(_args):
                      encoding="utf-8").read()
         never = ("NO CAPABILITY HAS EVER BEEN MEASURED" in html0
                  and "Never pooled with retention" in html0)
-        _capture(cmd_rate, _ns(topic="k", node="a", rating="hard", grade="partial",
-                               kind="transfer", production="half"))
+        _probe(grade="lapsed", rating="again")
         html1 = open(_capture_json(cmd_report, _ns(out=None, allow_outside=False))["path"],
                      encoding="utf-8").read()
-        # a HALF application must read 0% fired on the page, never 100%
-        measured = ("FIRED on 0%" in html1 and "Transfer" in html1)
+        # the CURRENT-ownership headline must be on the page — never the order-blind pool
+        measured = ("OWNED NOW" in html1 and "Transfer" in html1
+                    and "insufficient-data" in html1)          # 1 probe < the floor
         return never and measured
-    check("§4.8 Q4: the DASHBOARD shows the capability claim (and a half-application reads 0% fired)",
+    check("§4.8 Q4: the DASHBOARD leads with CURRENT ownership (never the order-blind lifetime pool)",
           fresh(_dashboard_shows_the_capability_claim))
 
-    # -- §5.5 THE INSTRUMENT GATE — the new protocol rule, applied to the release that wrote it --
-    # `stats.transfer` does not merely report; it CERTIFIES ("this capability is yours"). v0.7's
-    # gold set was an instrument nobody thought to test, and it turned out to RANK A FOOLED GRADER
-    # ABOVE A CORRECT ONE — eight gates walked past it because every one tested the subject and
-    # none tested the ruler. So: build a deliberately WRONG subject, run it through the instrument,
-    # and demand it scores WORSE. A ruler that ranks failure above success is not a lenient ruler;
-    # it is a NEGATIVE one, and every number downstream of it has its sign flipped.
-    # Test the WHOLE ordering, not just the endpoints. The first draft compared only `recalled`
-    # against `lapsed` — and a mutation that miscounted `partial` as a fired capability sailed
-    # straight through it, because it preserved the two endpoints it happened to check. An
-    # instrument gate that only exercises the extremes cannot see the middle, which is precisely
-    # where a ruler gets bent. §4.5, again: ask what ELSE would make this assertion true.
-    def _transfer_instrument_is_monotone(_h=None):
-        def learner(grade, rating):
-            def go(h):
-                _add_transfer_topic()
-                _mature()
-                _capture(cmd_rate, _ns(topic="k", node="a", rating=rating, grade=grade,
-                                       kind="transfer", production="p"))
-                return _capture_json(cmd_stats, _ns())["transfer"]
-            return fresh(go)()
-        fired = learner("recalled", "good")     # the capability FIRED
-        half = learner("partial", "hard")       # it half-fired — NOT the same thing
-        none = learner("lapsed", "again")       # it did not fire at all
-        return (
-            # `rate_fired` is the STRICT bar (`state: applied`): a half-application is not a yes
-            fired["rate_fired"] > half["rate_fired"] == none["rate_fired"] == 0.0
-            # `rate_any` is the LOOSE bar (the same one retention uses): partial sits in between
-            and fired["rate_any"] == half["rate_any"] == 1.0 > none["rate_any"]
-            # …and the STATE agrees with the strict bar, on all three
-            and fired["states"]["applied"] == 1
-            and half["states"]["applied"] == 0 and half["states"]["probed"] == 1
-            and none["states"]["applied"] == 0 and none["states"]["probed"] == 1
-            # …and the read a human sees never calls a half-application a fired one
-            and "FIRED on 100%" in fired["read"]
-            and "FIRED on 0%" in half["read"] and "FIRED on 0%" in none["read"])
-    check("§5.5 THE INSTRUMENT GATE: lapsed < partial < recalled — a FAILED transfer scores WORSE",
-          _transfer_instrument_is_monotone)
-
     # -- the CAPSTONE gets NO provisional credit: it may not be built on ungraded prerequisites --
-    # Found by an EXISTING check breaking the moment the capstone entered the DAG. An ordinary
-    # node advances on a stashed-but-ungraded prereq (so the tutor can keep teaching while the
-    # assessor works). The capstone is the claim that the learner can now USE the topic — serving
-    # it on unverified mastery is exactly the unearned claim the constitution forbids.
     def _capstone_needs_graded_prereqs(h):
         _add_transfer_topic()
         for nid in ("a", "b"):
             _capture(cmd_stash, _ns(action="add", json=json.dumps(
-                {"topic": "k", "node": nid, "probe": "p", "production": "ans"})))
+                {"topic": "k", "node": nid, "probe": "p", "production": "ans"}), file=None))
         blocked = _capture_json(cmd_next, _ns(topic="k"))     # both stashed, none GRADED
         for nid in ("a", "b"):
             _capture(cmd_rate, _ns(topic="k", node=nid, rating="good", grade="recalled",

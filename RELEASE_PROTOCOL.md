@@ -355,6 +355,31 @@ it costs nothing:
 - **Retention metric?** Feed it a learner who forgot everything. It must read worse than one who didn't.
 - **Adherence funnel?** Feed it someone who never came back. It must read worse than someone who did.
 
+> ### ⚠⚠ AND VARY THE **POPULATION**, NOT JUST THE **BAR**. ⚠⚠ — the gate's own blind spot
+>
+> **v0.8 built this gate, ran it, passed it, and shipped an inverted ruler anyway.**
+>
+> The v0.8 instrument check varied the **bar**: one node, one receipt, graded `recalled` /
+> `partial` / `lapsed`, asserting the metric ordered them correctly. It did. And the metric still
+> ranked **a learner who had lost every capability 2× above one who had mastered every one** —
+> because it pooled the whole lifetime log and was **order-blind**, and a single-receipt fixture
+> can never see order.
+>
+> **Varying the bar tests the SUBJECT. Varying the population tests the RULER.** They are not the
+> same test, and only the second one is this gate.
+>
+> So build **whole learners**, not single data points, and make them differ in *shape*:
+>
+> | vary | the fixture |
+> |---|---|
+> | **order** | improving (fail, fail, **pass**) vs declining (pass, pass, **fail**) — same events, opposite meaning |
+> | **volume** | one probe vs twenty. Does a rate exist at n=1? *(Every sibling metric had a floor. This one had none, and read "100%" off a single datum.)* |
+> | **recency** | a capability from June vs one from yesterday |
+> | **composition** | 5 nodes × 1 probe vs 1 node × 5 probes — same `n`, different truth |
+>
+> If two learners with **opposite** real-world standing produce the **same** number — or worse, the
+> **wrong** ordering — the ruler is broken, and no amount of testing the subject will ever show it.
+
 **And the reason the gate is needed at all:** the author of an instrument is the last person able to
 see it fail, because the instrument encodes their own judgment. Five of the six lenient
 adjudications were the *same mistake* — crediting an **adjacent fact** as partial credit — and one

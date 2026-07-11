@@ -96,7 +96,13 @@ Then narrate, in plain language, at most five of these — each one a number plu
 1.5. **Transfer — the capability claim, and it is NOT retention (v0.8).** Read `stats.transfer`. Engram has always claimed to build capability and, until v0.8, measured only memory: `transfer_probe` was authored by the architect since v0.1 and **read by nothing.**
 
    - **`n == 0`** — say it straight: *"no capability has ever been measured here. You've got 7 concepts carrying a transfer probe and 2 are mature enough to be asked it — that's a different question from whether you remember them, and it's the one you actually paid for."* Then offer it; `/review` serves the probe automatically when a due node is `transfer_ready`.
-   - **`n > 0`** — lead with **`rate_fired`** (graded `recalled` — the bar a node must clear to reach `transfer.state: applied`), and report `rate_any` beside it (which also counts `partial`, and is the **same bar retention uses**, so the two are comparable). **Never quote a bare "transfer rate"** — the two bars mean different things and the looser one is the flattering one.
+   - **`n > 0`** — lead with **`owned_rate`**: *of the capabilities you have probed, how many do you own **right now**?* It is order-aware, exactly as `transfer.state` is.
+
+     > ### ⚠ NEVER lead with `probe_fire_rate`. It is history, and it is order-blind.
+     >
+     > v0.8.0 led with the lifetime probe pool and shipped this: a learner who had **failed** five capabilities twice and then **mastered all five** read *"FIRED on 33%"*, while one who had **passed** them twice and then **lost all five** read *"FIRED on 67%"*. **The learner with zero current capability scored exactly double the one who owned all five** — and the dashboard put `fired 67%` next to `owned 0`. Report `probe_fire_rate` if you like, but say the word *history* when you do.
+
+   - **`insufficient_data: true`** (fewer than 5 probes) — the **rate** is suppressed and the **counts** are not. Say the counts: *"you own 2 of the 3 capabilities you've tested"* is a fact. *"67%"* over three probes is not a rate.
    - **Never pool it into retention, and never let the learner think you have.** *"You're holding 8 of 10 at the 30-day mark — that's memory. But of the 3 times we asked you to actually apply one, it fired once. Those are different muscles and the second one is the point."*
    - A transfer lapse is **not** a memory failure. Do not frame it as a setback: it is the first honest measurement of a thing that was never measured.
 

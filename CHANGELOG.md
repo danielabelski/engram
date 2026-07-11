@@ -1,5 +1,123 @@
 # Changelog
 
+## 0.8.1 — 2026-07-11 · THE RULER WAS NEVER TESTED, ONLY THE SUBJECT
+
+The post-release review (§7.5) found **11 defects in shipped v0.8.0**, and the two worst are the
+same failure the release was written to end.
+
+Selftest **180 → 191**.
+
+### ⚠ #1 — The capstone's transfer receipt was DEAD DATA
+
+The learner builds the capstone, passes it, and `stats.transfer` reads
+**"NO CAPABILITY HAS EVER BEEN MEASURED"** — while the receipt sits on disk. Two independent causes:
+
+- The capstone is built **once**, so its transfer receipt is its **first** receipt — and the v0.6.1
+  rule (*"a node's first receipt is its encoding event"*) swallowed it. But **a capstone has no
+  encoding phase at all.** The build *is* the event.
+- The census skipped it anyway: it is minted with `transfer_probe: None` (*"the capstone IS the
+  transfer probe"*), and the census required a non-empty one.
+
+**A FAILED capstone was discarded entirely** — the single most diagnostic event in the whole system
+(*"I could not actually use this topic"*), silently dropped.
+
+This is v0.8's own thesis — *"`transfer_probe` was authored since v0.1 and read by NOTHING"* —
+**reproduced one level up, on the most important node in the graph.** Receipts now carry a
+`capstone` stamp (written at grading time, like the `artifact` medium stamp), and the census asks
+`has_transfer_question()`, which the capstone answers yes to.
+
+### ⚠ #2 — The headline ranked a learner who LOST every capability ABOVE one who MASTERED every one
+
+`node.transfer.state` was deliberately **latest-evidence**, with a docstring saying *"a capability
+that fired in June and failed in September is not currently owned, and pretending otherwise would
+be a wrong number in the flattering direction."*
+
+They fixed it in `state` and shipped it in `rate_fired` — which pooled the **entire lifetime log**
+and was **order-blind**. It is the number `/coach` leads with and the dashboard's first chip:
+
+| learner | history | **owns now** | **v0.8.0 headline** |
+|---|---|---|---|
+| IMPROVING | failed all 5 twice, then **mastered all 5** | `applied: 5` | **"FIRED on 33%"** |
+| DECLINING | passed all 5 twice, then **lost all 5** | `applied: 0` | **"FIRED on 67%"** |
+
+**The learner with zero current capability scored exactly double the one who owned all five** — and
+the dashboard rendered `fired 67%` and `owned 0` as **adjacent chips.** That is not a lenient
+ruler. It is a **negative** one, and every number downstream had its sign flipped.
+
+**Two numbers, two names:** `owned_rate` (**THE HEADLINE** — of the capabilities you have probed,
+how many do you own *right now*; order-aware, exactly as `state` is) and `probe_fire_rate` (the
+lifetime probe-level **history**, order-blind by construction, named as history so it can never be
+mistaken for the headline again).
+
+> **And the part that matters most.** The shipped §5.5 instrument gate missed this because it
+> varied the **bar** (recalled / partial / lapsed, on one node, with one receipt) and **never varied
+> the population.** *It tested the subject, not the ruler* — the exact lesson v0.7 was written to
+> teach, repeated one release later, in the gate written to teach it.
+
+### ⚠ #4 — A failed transfer probe destroyed 97% of the memory's durability
+
+v0.8 separated the three populations **in the metrics** and pooled them **in the scheduler.** On a
+mature node — the only kind the system ever probes — one failed probe did this:
+
+```
+s: 443.5 → 12.3      (97% of the memory's durability, deleted)
+state: review → learning     lapses: 0 → 1     due: 2027-03-01 → 2026-03-17
+```
+
+…and dropped the node below the transfer bar, so it could never be re-probed. **Answering a HARDER
+question wrong demolished the schedule for the ORIGINAL concept.** It contradicted three separate
+sentences the same release shipped, including `_transfer_ready`'s own docstring warning about
+*"a lapse the schedule then punishes — a fabricated setback."* The maturity gate was built to
+prevent exactly that, and only ever guarded *immature* nodes.
+
+**A transfer lapse now leaves `fsrs` completely untouched** — and the receipt records
+`s_before == s_after` plus a `schedule_unchanged` note, so the evidence is honest about the fact
+that nothing moved. A transfer **success** still strengthens the memory, because applying an idea
+*is* a retrieval, and a strong one.
+
+### And seven more, all in shipped code
+
+3. **`add-topic --replace` destroyed a completed capstone's schedule.** The payload never contains a
+   capstone, so `_has_capstone` was always false on a replace and it was always re-minted `state:
+   new` — after the carry-forward loop, making it the one surviving node never carried forward. And
+   it **flattered**: the reset removed the rotting capstone from `retention.unmeasured`, so *"1
+   concept past due and unretrieved"* became *"30-day recall 100%"*. **Survivorship bias, through a
+   new door.**
+5. **`--replace` wiped `node.transfer` and never rebuilt it** (unlike `artifact`, which is recomputed
+   from evidence). Graph said `None`; `stats` still said `applied: 1`. Two sources, two truths.
+6. **No maturity gate at INGEST** — only at *selection*. A bare CLI `rate --kind transfer` certified
+   `applied` on a node encoded **yesterday**, while `transfer` itself returned zero candidates: the
+   engine refused to probe the very node it had just certified. (§4.8 Q5: the skills pass what the
+   engine expects; the CLI is the door nobody guards.)
+7. **`calibration_encode` was a RESIDUAL bucket** (`not in review_ids`), so transfer receipts fell
+   straight into a bucket whose own docstring calls it *"first-exposure (encode) guesses."* Transfer
+   is precisely where a learner is **most** overconfident — they know the concept, the capability
+   doesn't fire — so that overconfidence was misattributed to their encoding self-assessment, and
+   `/coach` would diagnose the wrong faculty and prescribe the wrong fix. **A residual bucket
+   silently absorbs every kind you add later.** Now named: `calibration_transfer`.
+8. **A payload node named `capstone` was silently destroyed** — and the minted capstone then listed
+   **itself** in `requires`, so it could never be served, while `next` cheerfully reported *"this
+   topic is finished."* Now refused, like `cmd_capstone` already did.
+9. **`stats.transfer` had no minimum-n floor.** Every sibling has one (calibration 10, modality 15,
+   the grader audit 30). One probe read **"FIRED on 100%"** and chipped it on the dashboard while
+   `calibration` correctly said `insufficient-data` on the same state. Floor: **5**. Counts are facts
+   and are always shown; a rate a single datum can swing by 20 points is not a rate.
+10. **`reps >= 3` counted the ENCODE**, so an advertised *"3+ retrievals"* delivered **2**. Maturity
+    now counts retrievals from the receipt log — the engine's own doctrine is that the first receipt
+    is the encoding event, *not* a retrieval.
+11. **An UNDATED receipt became the LATEST transfer evidence.** `_sort_key` deliberately sorts a
+    garbage-`ts` receipt **last** (so it can never win day-0) — and taking `ts[-1]` therefore handed
+    it the crown. A hand-edited undated `recalled` flipped a node to `applied` over a real, dated
+    `lapsed`. **The v0.6 fix and the v0.8 rule collided, and they collided in the flattering
+    direction.**
+
+### Also
+
+- **`as_number` let `Infinity` and `NaN` through** — not valid JSON, and Python's `json` module
+  parses them anyway. An `inf` sailed through every `isinstance(x, float)` check and died on the
+  first `int()`; a `NaN` compares False to everything, including itself, and never raises at all.
+  Fixed at **the** numeric gate for the entire engine. Fuzz: **0 crashes / 12,750 invocations.**
+
 ## 0.8.0 — 2026-07-11 · THE CLAIM — Engram measured memory and claimed capability. Now it measures both.
 
 `transfer_probe` has been authored by the curriculum architect **since v0.1**, stored by the
