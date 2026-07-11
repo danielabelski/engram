@@ -1,5 +1,81 @@
 # Changelog
 
+## 0.6.3 — 2026-07-11 · what a real session found
+
+The release protocol gained a gate it never had — **§5.6, the user session: stop testing, be a
+learner, and write down how it felt.** This is the first release to pass through it, and it found
+three things that 126 selftests, a fuzzer, two adversarial reviews and an agent dogfood all
+walked straight past — because none of them *reads the sentence as a human*.
+
+Full report: `docs/user-sessions/v0.6.2.md`.
+
+### The seven-minute silence
+
+The curriculum architect took **~7 minutes of completely silent terminal** before the first
+question. No spinner, no "this takes a minute", nothing. That silence lands *before the learner
+has seen a single thing this product does well* — and it is, by a distance, the most likely
+moment a first-time user closes the tab. A stranger will not stare at a blank screen for seven
+minutes on faith.
+
+**`/learn` now sets the expectation before it spawns the architect.** One line of prose, and it
+is the highest-value change in this release.
+
+### `decay` told you reviewing was pointless
+
+With nothing yet due, `decay` reported:
+
+> *"1 concept encoded; 0.4 expected to survive 30 days untouched, 0.4 if reviewed today
+> (0 minutes) — **a difference of 0.0**"*
+
+Arithmetically correct — nothing is due, so there is nothing to review today. **Rhetorically the
+exact opposite of the truth**: a learner reads *"a difference of 0.0"* and concludes reviewing
+buys nothing. This is the same bug class v0.6.1/v0.6.2 are named for — a number that misleads —
+simply pointing the other way. It now says:
+
+> *"1 concept encoded, none due yet — nothing to save today. The schedule brings each one back
+> just before it fades; 0.6 of 1 are expected to survive the next 30 days on that schedule."*
+
+### Two adjacent sections both called "Retention"
+
+The dashboard put *"Retention — recall by days since you first learned it"* directly above
+*"Retention by memory strength"*, and a user cannot tell which is the real number. The older view
+is renamed and demoted.
+
+### Engine (selftest 126 → 127)
+
+- `decay` with an empty due queue emits an honest read instead of a discouraging zero. Selftest
+  added and **mutation-tested**.
+- **The dashboard could be killed by a hand-edited `state`.** `cmd_report` tested `st not in
+  STATE_DOTS` without coercing first — an unhashable value (`state: {}`) raises `TypeError` and
+  takes `/coach`'s HTML down. `state_counts()` was guarded for exactly this and `cmd_report` was
+  not. **Caught by the §4.7 fuzz gate on its first run under the new protocol** — 35 crashes / 500
+  states, from a generator shape the previous sweep never produced. Now **0 / 900 across 3 seeds**,
+  with an unhashable-state fixture added to the read-path check.
+
+  *(And the first version of that check was itself theatre — the fixture's `order` didn't list the
+  new nodes, so `cmd_report` never visited them. §4.5 caught it. The gates catch the gates.)*
+
+### Release protocol
+
+`RELEASE_PROTOCOL.md` substantially rewritten around what actually caught bugs across v0.5–v0.6:
+
+- **The bug classes this repo cannot ship** — led by *a number wrong in the flattering direction*,
+  because a crash gets fixed and a flattering number gets believed.
+- **§4.5 mutation-test every new check** — three of ours were theatre (one asserted a constant;
+  one had a fixture where the old and new definitions agreed by coincidence).
+- **§4.7 the fuzz gate** — 0 crashes / 500 type-corrupt states. Read paths degrade; `doctor`
+  reports corruption and must never die of what it exists to find.
+- **§4.8 the numbers audit** — five questions, answered in writing, for every number a release
+  adds. Question 1 is *"do the engine's own commands agree with each other?"* — `retention` once
+  said 100% while `decay` said 56%, and nobody had ever run them side by side.
+- **§5.5 the dogfood must be UNCONTAMINATED** — give each agent exactly what the real skill gives
+  it. Ours once *certified* a dead feature because the prompt handed the assessor the answer.
+- **§5.6 the user session** — the gate this release is named for. Its verdict is **binding**: if
+  you would not hand it to a stranger, it does not ship, however green the tests are.
+- **§7.5 the post-release review** — because the two worst v0.6 bugs were found in *shipped* code.
+
+No schema change, no migration.
+
 ## 0.6.2 — 2026-07-11 · the honest denominator was not honest
 
 Four defects in released v0.6.0/v0.6.1, found by an **independent reviewer working from the

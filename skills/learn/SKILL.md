@@ -44,6 +44,12 @@ python3 "$ENGRAM" stash count   # productions left ungraded by a previous sessio
   2. **Prior exposure** (arrow-key): never touched it / seen it, shaky / comfortable with neighbors.
   3. Check `model` interests; if empty, ask for 2–3 things they love (any domain) — fuel for analogies. Store with `model --add-interest "a" --add-interest "b"` (repeat the flag per interest).
 
+  **⚠ Say this BEFORE you spawn the architect, every time — it is the most important line in the skill:**
+
+  > *"Building your concept map — decomposing this into a first-principles chain takes a minute or two. It's the one slow step; everything after is conversational."*
+
+  A `RELEASE_PROTOCOL` §5.6 user session measured the architect at **~7 minutes of completely silent terminal**. That silence lands *before the learner has seen a single thing this product does well*, and it is the most likely moment a first-time user closes the tab. They will not wait through a blank screen for something they have no reason to trust yet. **Set the expectation, or lose them.**
+
   Then spawn the **engram-curriculum-architect** agent with: topic, goal, deadline, prior exposure, interests, and any active experiment arm (`python3 "$ENGRAM" experiment assign --topic <t>` — if an experiment is active, its arm constrains teaching strategy and must be recorded in your session notes). Save its JSON: `python3 "$ENGRAM" add-topic --file <tmpfile>`. Show the map (`topic-status` — it renders a progress bar; paste it in a fenced block) and sanity-check scope with one arrow-key question: *looks right / too big / wrong emphasis* → revise via the architect if needed.
 
 ## 2 · Pretest the frontier (new topics only)

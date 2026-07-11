@@ -1765,6 +1765,17 @@ def cmd_decay(args):
     }
     if not n:
         out["read"] = "nothing encoded yet — nothing to lose"
+    elif not due_n:
+        # Nothing is due, so the benefit arm is (correctly) identical to the do-nothing arm —
+        # and v0.6.2 dutifully reported "a difference of 0.0", which a learner reads as
+        # "reviewing buys me nothing." Arithmetically true, rhetorically the opposite of the
+        # truth. Same bug class this release is named for, pointing the other way.
+        # (Found by the RELEASE_PROTOCOL §5.6 user session, not by any test.)
+        out["saved_by_reviewing_today"] = 0.0
+        out["read"] = ("%d concept%s encoded, none due yet — nothing to save today. The "
+                       "schedule brings each one back just before it fades; %.1f of %d are "
+                       "expected to survive the next %d days on that schedule."
+                       % (n, "s" if n != 1 else "", alive("r_no_review"), n, horizon))
     else:
         saved = alive("r_if_reviewed") - alive("r_no_review")
         out["saved_by_reviewing_today"] = round(saved, 1)
@@ -2125,7 +2136,10 @@ def cmd_report(args):
             if not isinstance(node, dict):
                 continue
             st = node.get("state", "new")
-            if st not in STATE_DOTS:
+            # `st not in STATE_DOTS` raises TypeError on an unhashable value (a hand-edited
+            # `state: {}` or `state: []`), taking the whole dashboard down. state_counts() was
+            # guarded for this and cmd_report was not. Caught by the §4.7 fuzz gate.
+            if not isinstance(st, str) or st not in STATE_DOTS:
                 st = "new"
             fsrs = _fsrs_of(node)
             flags = ("<span class='flag'>†</span>" if node.get("threshold") else "") + \
@@ -2186,7 +2200,7 @@ def cmd_report(args):
         parts.append("<p class='note' style='color:var(--bad)'><b>%s</b></p>"
                      % escape(ret["read"]))
 
-    parts.append("<h2>Retention by memory strength</h2>")
+    parts.append("<h2>Recall by memory strength <span class='note' style='font-size:13px;font-weight:400'>(the older view — grouped by how durable the memory is, not by how long ago you learned it)</span></h2>")
     if stats["recall_by_stability"]:
         for b, label in (("early", "early (S<7d)"), ("week", "week (7–30d)"), ("month+", "month+ (>30d)")):
             v = stats["recall_by_stability"].get(b)
@@ -2728,6 +2742,22 @@ def cmd_selftest(_args):
         _add_ab()
         d = _capture_json(cmd_decay, _ns(topic="t", horizon=30))
         return d["encoded"] == 0 and "nothing to lose" in d["read"]
+    # -- decay with NOTHING DUE must not read as "reviewing is pointless" (v0.6.3) --
+    # Nothing due -> the benefit arm is correctly identical to the do-nothing arm, and v0.6.2
+    # reported "a difference of 0.0". Arithmetically true; a learner reads it as "reviewing
+    # buys me nothing", which is the opposite of the truth. Found by the §5.6 USER SESSION —
+    # no test caught it, because no test reads the sentence as a human.
+    def _decay_nothing_due(h):
+        _add_ab()
+        _capture(cmd_rate, _ns(topic="t", node="a", rating="easy", grade="recalled",
+                               kind="encode", production="x"))     # easy -> due far out
+        d = _capture_json(cmd_decay, _ns(topic="t", horizon=30))
+        return (d["due_now"] == 0
+                and "nothing to save today" in d["read"]
+                and "difference of 0.0" not in d["read"]
+                and "brings each one back" in d["read"])   # says what the schedule IS for
+    check("decay with nothing due says 'nothing to save today', not 'a difference of 0.0'",
+          fresh(_decay_nothing_due))
     check("decay: an unencoded topic has nothing to lose", fresh(_decay_empty))
 
     # -- COMMIT: the implementation intention round-trips, and is off-switchable --
@@ -3175,11 +3205,15 @@ def cmd_selftest(_args):
         os.makedirs(p("graphs"), exist_ok=True); os.makedirs(p("receipts"), exist_ok=True)
         write_json(p("graphs", "bad.json"), {
             "topic": "bad", "title": {"not": "a string"}, "goal": ["nor", "this"],
-            "order": ["a", {"unhashable": 1}, 42, "ghost"],
+            "order": ["a", {"unhashable": 1}, 42, "ghost", "d", "e", "f"],
             "nodes": {"a": {"claim": "c", "probe": "p", "state": 5, "fsrs": "not-a-dict"},
                       "b": ["not", "a", "node"], "c": None,
                       "d": {"claim": "c", "probe": "p", "state": "review",
-                            "fsrs": {"s": "NaN", "due": 0, "last": [], "reps": {}}}}})
+                            "fsrs": {"s": "NaN", "due": 0, "last": [], "reps": {}}},
+                      # an UNHASHABLE state: `st not in STATE_DOTS` raises TypeError and took
+                      # the dashboard down. state_counts() was guarded; cmd_report was not.
+                      "e": {"claim": "c", "probe": "p", "state": {}, "fsrs": {}},
+                      "f": {"claim": "c", "probe": "p", "state": ["x"], "fsrs": {}}}})
         write_json(p("graphs", "worse.json"), {"topic": "worse", "nodes": "not-an-object"})
         with open(p("receipts", "bad.jsonl"), "w", encoding="utf-8") as f:
             f.write(json.dumps({"ts": 20260701, "topic": {"x": 1}, "node": ["y"],
