@@ -4230,6 +4230,45 @@ def cmd_selftest(_args):
     check("§4.8 Q4: the DASHBOARD shows the capability claim (and a half-application reads 0% fired)",
           fresh(_dashboard_shows_the_capability_claim))
 
+    # -- §5.5 THE INSTRUMENT GATE — the new protocol rule, applied to the release that wrote it --
+    # `stats.transfer` does not merely report; it CERTIFIES ("this capability is yours"). v0.7's
+    # gold set was an instrument nobody thought to test, and it turned out to RANK A FOOLED GRADER
+    # ABOVE A CORRECT ONE — eight gates walked past it because every one tested the subject and
+    # none tested the ruler. So: build a deliberately WRONG subject, run it through the instrument,
+    # and demand it scores WORSE. A ruler that ranks failure above success is not a lenient ruler;
+    # it is a NEGATIVE one, and every number downstream of it has its sign flipped.
+    # Test the WHOLE ordering, not just the endpoints. The first draft compared only `recalled`
+    # against `lapsed` — and a mutation that miscounted `partial` as a fired capability sailed
+    # straight through it, because it preserved the two endpoints it happened to check. An
+    # instrument gate that only exercises the extremes cannot see the middle, which is precisely
+    # where a ruler gets bent. §4.5, again: ask what ELSE would make this assertion true.
+    def _transfer_instrument_is_monotone(_h=None):
+        def learner(grade, rating):
+            def go(h):
+                _add_transfer_topic()
+                _mature()
+                _capture(cmd_rate, _ns(topic="k", node="a", rating=rating, grade=grade,
+                                       kind="transfer", production="p"))
+                return _capture_json(cmd_stats, _ns())["transfer"]
+            return fresh(go)()
+        fired = learner("recalled", "good")     # the capability FIRED
+        half = learner("partial", "hard")       # it half-fired — NOT the same thing
+        none = learner("lapsed", "again")       # it did not fire at all
+        return (
+            # `rate_fired` is the STRICT bar (`state: applied`): a half-application is not a yes
+            fired["rate_fired"] > half["rate_fired"] == none["rate_fired"] == 0.0
+            # `rate_any` is the LOOSE bar (the same one retention uses): partial sits in between
+            and fired["rate_any"] == half["rate_any"] == 1.0 > none["rate_any"]
+            # …and the STATE agrees with the strict bar, on all three
+            and fired["states"]["applied"] == 1
+            and half["states"]["applied"] == 0 and half["states"]["probed"] == 1
+            and none["states"]["applied"] == 0 and none["states"]["probed"] == 1
+            # …and the read a human sees never calls a half-application a fired one
+            and "FIRED on 100%" in fired["read"]
+            and "FIRED on 0%" in half["read"] and "FIRED on 0%" in none["read"])
+    check("§5.5 THE INSTRUMENT GATE: lapsed < partial < recalled — a FAILED transfer scores WORSE",
+          _transfer_instrument_is_monotone)
+
     # -- the CAPSTONE gets NO provisional credit: it may not be built on ungraded prerequisites --
     # Found by an EXISTING check breaking the moment the capstone entered the DAG. An ordinary
     # node advances on a stashed-but-ungraded prereq (so the tutor can keep teaching while the
