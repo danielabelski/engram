@@ -1278,11 +1278,12 @@ def compute_momentum(receipts):
     cutoff = today() - timedelta(days=MOMENTUM_WINDOW_DAYS)
     reviews_7d = recalled_7d = 0
     gained = 0.0
+    genuine = {id(r) for r in _review_receipts(receipts)}   # §4.8 Q1: one definition of "review"
     for r in receipts:
         d = safe_date(r.get("ts"))
         if d is None or d < cutoff:
             continue
-        if r.get("kind") == "review" and r.get("rating"):
+        if id(r) in genuine:
             reviews_7d += 1
             sb, sa = as_number(r.get("s_before")), as_number(r.get("s_after"))
             if sb is not None and sa is not None and sa > sb:
@@ -1330,9 +1331,7 @@ def compute_modality(receipts):
     the read is guarded by the same per-arm floor as n-of-1 experiments, and it ships
     its own confound caveat (MODALITY_CAVEAT) — the assignment is not randomized."""
     first = {}
-    for r in receipts:
-        if r.get("kind") != "review" or not r.get("rating"):
-            continue
+    for r in _review_receipts(receipts):      # §4.8 Q1: a node's FIRST receipt is not a review
         d = safe_date(r.get("ts"))
         if d is None:
             continue
@@ -1402,6 +1401,27 @@ def _by_node(receipts):
             continue
         if r.get("kind") == "review" and r.get("rating"):
             slot["reviews"].append(r)
+    return out
+
+def _review_receipts(receipts):
+    """Every receipt that is a genuine RETENTION review.
+
+    A `kind: review` receipt that is NOT its node's first — because a node's first receipt is
+    its ENCODING event whatever it is labelled, and a first exposure cannot be a retention test.
+
+    v0.6.1 established that principle in `_by_node` (which feeds `adherence` and `retention`)
+    and left `stats.reviews`, `compute_momentum`, `compute_modality` and the calibration split
+    filtering on `kind == "review"` **directly** — four implementations of one rule, three of
+    them wrong. A bare CLI `rate` (argparse default `kind="review"`) on a never-encoded node
+    therefore inflated `stats.reviews`, and — worse — handed `compute_modality` an *encoding*
+    receipt as that node's "first review", corrupting the medium telemetry `docs/06` exists to
+    produce. `adherence` said 0 reviews while `stats` said 1, on the same state.
+
+    One predicate. Used everywhere. (RELEASE_PROTOCOL §4.8 Q1: the engine's own commands must
+    agree with each other.)"""
+    out = []
+    for slot in _by_node(receipts).values():
+        out.extend(slot["reviews"])
     return out
 
 def compute_adherence():
@@ -1626,7 +1646,8 @@ def _open_misconceptions():
 
 def compute_stats():
     receipts = collect_receipts()
-    reviews = [r for r in receipts if r.get("kind") == "review" and r.get("rating")]
+    reviews = _review_receipts(receipts)          # §4.8 Q1: one definition, shared
+    review_ids = {id(r) for r in reviews}
     def bucket(r):
         s = as_number(r.get("s_before")) or 0
         return "early" if s < 7 else ("week" if s < 30 else "month+")
@@ -1641,8 +1662,8 @@ def compute_stats():
     # Calibrate on review recall only; first-exposure (encode) guesses are a
     # separate, noisier signal — reported alongside, never pooled into the verdict.
     with_conf = [r for r in receipts if r.get("confidence") is not None]
-    calibration = _calibration([r for r in with_conf if r.get("kind") == "review"])
-    calibration_encode = _calibration([r for r in with_conf if r.get("kind") != "review"])
+    calibration = _calibration([r for r in with_conf if id(r) in review_ids])
+    calibration_encode = _calibration([r for r in with_conf if id(r) not in review_ids])
     topics = []
     for t, g in iter_graphs():
         topics.append({"topic": t, "title": g.get("title"), "states": state_counts(g)})
@@ -1751,10 +1772,27 @@ def cmd_decay(args):
     n = len(rows)
     mean = lambda k: (round(sum(r[k] for r in rows) / n, 3) if n else None)
     alive = lambda k: (round(sum(r[k] for r in rows), 1) if n else 0.0)
+    # THE DENOMINATOR MUST BE ON THE LABEL. `decay` averages over EVERY encoded node (that is
+    # its job: what happens to this topic if you do nothing). `retention.unmeasured` and the
+    # ambient hook average over the PAST-DUE population (that is theirs: what is rotting).
+    # Both are correct, both were called "current recall", and they differed by ~10 points on
+    # the same state — so a learner comparing them cannot tell which to believe. Neither is
+    # lying; the *labels* were. Ship both figures, name their populations, and the three
+    # surfaces reconcile exactly. (RELEASE_PROTOCOL §4.8 Q1.)
+    due_rows = [r for r in rows if r["due"]]
+    mean_due = (round(sum(r["r_now"] for r in due_rows) / len(due_rows), 3)
+                if due_rows else None)
     out = {
         "topic": args.topic, "horizon_days": horizon,
         "encoded": n, "due_now": due_n,
-        "now": {"mean_recall": mean("r_now"), "expected_alive": alive("r_now")},
+        "now": {
+            "mean_recall": mean("r_now"),          # over ALL encoded nodes
+            "mean_recall_due": mean_due,           # over the DUE nodes — matches retention + hook
+            "population": "mean_recall is over all %d encoded node%s; mean_recall_due is over "
+                          "the %d past due (the same population retention.unmeasured and the "
+                          "session hook report)" % (n, "s" if n != 1 else "", due_n),
+            "expected_alive": alive("r_now"),
+        },
         "at_horizon_no_review": {"mean_recall": mean("r_no_review"),
                                  "expected_alive": alive("r_no_review")},
         "at_horizon_if_reviewed_today": {"mean_recall": mean("r_if_reviewed"),
@@ -2370,15 +2408,25 @@ def cmd_selftest(_args):
               and stats["momentum"]["most_durable"]["node"] in ("a", "b"))
         # unit-test the durability arithmetic in isolation (today == 2026-08-05 here):
         # only in-window successful reviews count; a shrink contributes 0; old ones excluded.
+        # Each node needs its ENCODE receipt first — a node's first receipt is its encoding
+        # event, never a review (v0.6.1), and every counter now shares that one predicate.
         mom = compute_momentum([
-            {"ts": "2026-08-05", "kind": "review", "rating": "good",
-             "s_before": 2.0, "s_after": 9.0, "grade": "recalled"},
-            {"ts": "2026-08-04", "kind": "review", "rating": "hard",
-             "s_before": 5.0, "s_after": 6.5},
-            {"ts": "2026-08-05", "kind": "review", "rating": "again",
-             "s_before": 8.0, "s_after": 3.0},          # lapse: no negative growth
-            {"ts": "2026-06-01", "kind": "review", "rating": "good",
-             "s_before": 1.0, "s_after": 40.0},          # outside 7-day window: excluded
+            {"id": "e1", "ts": "2026-05-01", "kind": "encode", "rating": "good",
+             "topic": "t", "node": "n1"},
+            {"id": "e2", "ts": "2026-05-01", "kind": "encode", "rating": "good",
+             "topic": "t", "node": "n2"},
+            {"id": "e3", "ts": "2026-05-01", "kind": "encode", "rating": "good",
+             "topic": "t", "node": "n3"},
+            {"id": "e4", "ts": "2026-05-01", "kind": "encode", "rating": "good",
+             "topic": "t", "node": "n4"},
+            {"id": "r1", "ts": "2026-08-05", "kind": "review", "rating": "good",
+             "topic": "t", "node": "n1", "s_before": 2.0, "s_after": 9.0, "grade": "recalled"},
+            {"id": "r2", "ts": "2026-08-04", "kind": "review", "rating": "hard",
+             "topic": "t", "node": "n2", "s_before": 5.0, "s_after": 6.5},
+            {"id": "r3", "ts": "2026-08-05", "kind": "review", "rating": "again",
+             "topic": "t", "node": "n3", "s_before": 8.0, "s_after": 3.0},   # lapse: no negative growth
+            {"id": "r4", "ts": "2026-06-01", "kind": "review", "rating": "good",
+             "topic": "t", "node": "n4", "s_before": 1.0, "s_after": 40.0},  # outside window
         ])
         check("momentum sums only in-window durability gains",
               mom["reviews_7d"] == 3 and approx(mom["stability_gained_7d"], 8.5, 0.01))
@@ -2760,6 +2808,60 @@ def cmd_selftest(_args):
           fresh(_decay_nothing_due))
     check("decay: an unencoded topic has nothing to lose", fresh(_decay_empty))
 
+    # -- EVERY review-counter must agree on what a review IS (v0.6.4) --
+    # v0.6.1 established "a node's first receipt is its encoding event" in _by_node (feeding
+    # adherence + retention) and left stats.reviews, momentum, modality and the calibration
+    # split filtering `kind == "review"` DIRECTLY — four implementations of one rule, three
+    # wrong. A bare CLI `rate` (argparse default kind="review") on a never-encoded node made
+    # `adherence` say 0 reviews while `stats` said 1, and handed `compute_modality` an ENCODING
+    # receipt as that node's "first review" — corrupting the medium telemetry docs/06 exists to
+    # produce. (RELEASE_PROTOCOL §4.8 Q1: the engine's own commands must agree with each other.)
+    def _one_definition_of_review(h):
+        _add_ab()
+        _capture(cmd_rate, _ns(topic="t", node="a", rating="good", grade="recalled",
+                               confidence=80, kind="review", production="x"))  # bare-CLI default
+        os.environ["ENGRAM_TODAY"] = "2026-07-25"
+        ad = _capture_json(cmd_adherence, _ns())
+        st = _capture_json(cmd_stats, _ns())
+        ret = _capture_json(cmd_retention, _ns())
+        os.environ["ENGRAM_TODAY"] = "2026-07-06"
+        return (ad["loop_closure"]["first_review_done"] == 0     # adherence: not a review ✓
+                and ret["coverage"]["reviews_total"] == 0         # retention: not a review ✓
+                and st["reviews"] == 0                            # stats: WAS 1 before this fix
+                and st["momentum"]["reviews_7d"] == 0
+                and st["modality"]["dialogue"]["n"] == 0          # modality: WAS 1 — corrupting
+                and st["calibration"]["n"] == 0                   # …and it was in the wrong pool
+                and st["calibration_encode"]["n"] == 1)           # it belongs HERE
+    check("every review-counter shares one definition (adherence/retention/stats/momentum/modality)",
+          fresh(_one_definition_of_review))
+    # -- the three "current recall" surfaces must RECONCILE (v0.6.4) --
+    # `decay.now.mean_recall` averages over ALL encoded nodes; `retention.unmeasured` and the
+    # ambient hook average over the PAST-DUE ones. Both correct, both called "current recall",
+    # ~10 points apart on the same state — a learner could not tell which to believe. Neither
+    # number was lying; the labels were. (RELEASE_PROTOCOL §4.8 Q1.)
+    def _recall_surfaces_reconcile(h):
+        g = {"topic": "t", "title": "T", "order": ["a", "b", "c"], "nodes": {
+            "a": {"claim": "A", "probe": "pa"}, "b": {"claim": "B", "probe": "pb"},
+            "c": {"claim": "C", "probe": "pc"}}}
+        _capture(cmd_add_topic, _ns(json=json.dumps(g), replace=False))
+        for nid in ("a", "b", "c"):
+            _capture(cmd_rate, _ns(topic="t", node=nid, rating="good", grade="recalled",
+                                   kind="encode", production="x"))
+        os.environ["ENGRAM_TODAY"] = "2026-07-13"
+        _capture(cmd_rate, _ns(topic="t", node="a", rating="easy", grade="recalled",
+                               kind="review", production="x"))      # `a` becomes healthy/far-out
+        os.environ["ENGRAM_TODAY"] = "2026-08-20"                   # b, c now rotting
+        d = _capture_json(cmd_decay, _ns(topic="t", horizon=30))
+        r = _capture_json(cmd_retention, _ns())
+        os.environ["ENGRAM_TODAY"] = "2026-07-06"
+        # decay must expose BOTH, and its due-only figure must equal retention's projection
+        return (d["now"]["mean_recall_due"] is not None
+                and d["now"]["mean_recall"] != d["now"]["mean_recall_due"]   # they DO differ
+                and "encoded node" in d["now"]["population"]                 # …and it says why
+                and abs(d["now"]["mean_recall_due"]
+                        - r["unmeasured"]["projected_recall_now"]) < 0.02)   # …and they reconcile
+    check("decay's due-only recall reconciles with retention.unmeasured (denominators labelled)",
+          fresh(_recall_surfaces_reconcile))
     # -- COMMIT: the implementation intention round-trips, and is off-switchable --
     def _commit(h):
         c = _capture_json(cmd_commit, _ns(cue="when I open the terminal",
@@ -3441,17 +3543,25 @@ def cmd_selftest(_args):
           fresh(_receipt_stamp))
 
     # -- modality telemetry: guarded read, arm split, first-review-per-node only --
-    mod_thin = compute_modality([{"ts": "2026-07-01", "kind": "review", "rating": "good",
-                                  "topic": "t", "node": "a", "artifact": True}])
+    mod_thin = compute_modality([
+        {"id": "e", "ts": "2026-06-01", "kind": "encode", "rating": "good",
+         "topic": "t", "node": "a"},
+        {"id": "r", "ts": "2026-07-01", "kind": "review", "rating": "good",
+         "topic": "t", "node": "a", "artifact": True}])
     check("modality guarded on thin data",
           mod_thin["read"] == "insufficient-data" and mod_thin["explorable"]["n"] == 1)
     syn = []
     for i in range(6):
-        syn.append({"ts": "2026-07-01", "kind": "review", "rating": "good",
+        # every node gets its ENCODE receipt first — a first receipt is never a review
+        syn.append({"id": "ee%d" % i, "ts": "2026-06-01", "kind": "encode", "rating": "good",
                     "topic": "t", "node": "e%d" % i, "artifact": True})
-        syn.append({"ts": "2026-07-02", "kind": "review", "rating": "again",
+        syn.append({"id": "ed%d" % i, "ts": "2026-06-01", "kind": "encode", "rating": "good",
+                    "topic": "t", "node": "d%d" % i})
+        syn.append({"id": "re%d" % i, "ts": "2026-07-01", "kind": "review", "rating": "good",
+                    "topic": "t", "node": "e%d" % i, "artifact": True})
+        syn.append({"id": "re%db" % i, "ts": "2026-07-02", "kind": "review", "rating": "again",
                     "topic": "t", "node": "e%d" % i, "artifact": True})  # 2nd review: ignored
-        syn.append({"ts": "2026-07-01", "kind": "review", "rating": "again",
+        syn.append({"id": "rd%d" % i, "ts": "2026-07-01", "kind": "review", "rating": "again",
                     "topic": "t", "node": "d%d" % i})
     mod = compute_modality(syn)
     check("modality splits arms on first review only",

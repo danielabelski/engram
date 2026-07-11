@@ -1,5 +1,61 @@
 # Changelog
 
+## 0.6.4 — 2026-07-11 · one definition of "review", and the denominator on the label
+
+Found by running **§7.5 (post-release review)** and **§4.8 (the numbers audit)** of the release
+protocol *on the release that added them*. Both are cross-command disagreements: the engine
+telling one story in one place and a different story in another, on the same state.
+
+### 1. Four implementations of one rule, three of them wrong
+
+v0.6.1 established the principle — **a node's first receipt is its ENCODING event, whatever it
+is labelled** — and fixed it in `_by_node`, which feeds `adherence` and `retention`. It left
+`stats.reviews`, `compute_momentum`, `compute_modality` and the calibration split filtering on
+`kind == "review"` **directly**.
+
+`rate --kind` defaults to `"review"`, so a bare CLI `rate` on a never-encoded node produced this,
+on **one state**:
+
+```
+adherence.loop_closure : 0 reviews     ← correct
+retention.coverage     : 0 reviews     ← correct
+stats.reviews          : 1             ← wrong
+modality.dialogue.n    : 1             ← wrong, and it CORRUPTS the medium telemetry:
+                                          an ENCODING receipt became a node's "first review",
+                                          which is the exact comparison docs/06 exists to make
+calibration.n          : 1             ← wrong pool (it is an encode, not a retrieval)
+```
+
+Two commands, same state, contradictory answers. **Fixed:** one predicate, `_review_receipts()`,
+shared by every counter. `adherence`, `retention`, `stats`, `momentum`, `modality` and both
+calibration pools now agree by construction.
+
+*(The three selftests that broke on this fix were themselves the tell: they passed synthetic
+receipts carrying **no `topic`/`node` at all** — fixtures that had never been shaped like real
+data. They were rewritten as real receipt streams.)*
+
+### 2. The denominator was not on the label
+
+Three surfaces reported "current recall" and meant different populations:
+
+```
+retention.unmeasured.projected_recall_now : 56%   over the PAST-DUE nodes
+session hook ("those N sit at ~X%")       : 56%   over the PAST-DUE nodes
+decay.now.mean_recall                     : 66%   over ALL ENCODED nodes
+```
+
+**Neither number was lying. The labels were.** Both are correct for what they measure, and a
+learner comparing them could not possibly tell which to believe. `decay` now ships
+`mean_recall_due` beside `mean_recall`, with a `population` string naming each denominator — and
+the three surfaces reconcile exactly.
+
+### Engine (selftest 127 → 129)
+
+Both fixes selftested and **mutation-tested**. A new check asserts the cross-command agreement
+directly, so the four counters can never drift apart again.
+
+No schema change, no migration.
+
 ## 0.6.3 — 2026-07-11 · what a real session found
 
 The release protocol gained a gate it never had — **§5.6, the user session: stop testing, be a
