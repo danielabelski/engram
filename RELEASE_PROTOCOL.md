@@ -297,6 +297,29 @@ the dashboard — not sit in a nested key that only a test ever opens.
 > grep -ci 'unvalidated\|unaudited\|grader\|<the failure word>' /tmp/d.html   # must be > 0
 > ```
 
+> ### ⚠ A FIELD IS NOT A NARRATOR — and the HAPPY PATH is where caveats die ⚠ NEW
+>
+> v0.7.0's audit computed a caveat (*"these runs are identical, so test-retest measures nothing"*),
+> wrote it to `reasons` on disk, and **the `pass` branch threw it away** — then printed
+> **"test-retest 1.00"** as a validated figure. The most reassuring number in the payload, quoted as
+> evidence, by the branch that had just discarded the note saying it was evidence of nothing.
+> `grader-health` did not even return the key, though the skill file says *"read `reasons` aloud."*
+>
+> **Two rules, both cheap, both learned by shipping the bug:**
+>
+> 1. **`pass` is the ONE verdict where the teeth are off — so it is the one place a caveat MUST
+>    survive.** Every failing branch joins its reasons because failure is loud. The happy path
+>    builds its own cheerful string and drops them. **Read the success branch hardest.**
+> 2. **A check that asserts a FIELD CONTAINS the caveat proves nothing about whether anything READS
+>    it.** v0.7's selftest did exactly that and stayed green while no runtime surface consumed the
+>    key. **Follow the caveat all the way to a string a human sees** — the `read`, the skill's
+>    output, the HTML — and assert it *there*.
+>
+> **And while you are in there: DERIVE, never BELIEVE.** `grader_unvalidated` was read *from the
+> audit file* instead of computed from the (already-validated) `verdict`, so a file saying
+> `{"verdict": "fail", "grader_unvalidated": false}` switched the teeth off completely. A flag that
+> is a **function** of a validated field must be written as one.
+
 ### 5. Can it be reached from the CLI in a way the skills never take?
 
 The skills always pass explicit flags. **The CLI has defaults, and they bite.** `rate --kind`
@@ -306,6 +329,51 @@ defaults to `"review"`, so a bare `rate` wrote a node's only receipt as a review
 Every metric keys off exact literals. **Validate them** (`choices=`, a `KINDS` constant, a check
 in `validate_item`) so a typo dies before any write — receipts are append-only, so a bad one can
 never be corrected.
+
+### 5.5 · IF THE NUMBER IS AN INSTRUMENT, TEST THE INSTRUMENT ⚠ NEW — and it is the sharpest gate here
+
+**v0.7.0 built a gold set to catch a lenient grader — and the gold set was rewarding leniency.**
+Nobody caught it, through eight gates, because every one of them tested the *grader*. **Not one
+tested the ruler.**
+
+The test that found it takes four lines, and it is now mandatory for any metric that *ranks* or
+*certifies* anything:
+
+> **Build a deliberately WRONG subject. Run it through your instrument. Assert it scores WORSE
+> than a correct one.**
+
+```
+grader that is CORRECT on the trap item  ->  QWK 0.990
+grader that is FOOLED by the trap item   ->  QWK 1.000   ← THE INSTRUMENT IS INVERTED
+```
+
+A ruler that ranks a fooled grader above a correct one is not a lenient ruler — it is a **negative**
+one, and every number downstream of it has its sign flipped. This is a **monotonicity check**, and
+it costs nothing:
+
+- **Grader/judge?** Feed it a subject that fails the exact trap the set exists to set. It must score lower.
+- **Retention metric?** Feed it a learner who forgot everything. It must read worse than one who didn't.
+- **Adherence funnel?** Feed it someone who never came back. It must read worse than someone who did.
+
+**And the reason the gate is needed at all:** the author of an instrument is the last person able to
+see it fail, because the instrument encodes their own judgment. Five of the six lenient
+adjudications were the *same mistake* — crediting an **adjacent fact** as partial credit — and one
+of them was on a `fluent-but-empty` item, which means **the author was fooled by fluency in the
+category built to catch being fooled by fluency.**
+
+**Then the corollary, and it is uncomfortable:** when the instrument disagrees with the subject and
+you *correct the instrument*, you have made it **circular**. The agreement that follows measures your
+willingness to concede, not the subject's validity. So:
+
+- **Say so, in the payload.** Engram's audit now carries `gold_adjudication: "authored"` and refuses
+  to let a QWK from an authored set certify a grader from the same model family.
+- **Keep the disagreements you cannot resolve.** One item (`g_054`) was left contested on purpose,
+  because an independent reviewer judged the original defensible. **An instrument with no
+  disagreement left in it measures nothing.**
+- **Find the claim that does NOT depend on the instrument being perfectly calibrated.** Here it was
+  `graded_up == 0` — a *direction* count. Every authoring error was lenient, so correcting them moved
+  the bar **down**, and the grader still never exceeded it. That claim got *stronger* under
+  correction. **That is the one that goes on the badge.**
 
 ### 6. Does its LABEL survive contact with a reader? ⚠ NEW — bug class #7
 
@@ -547,6 +615,9 @@ shipped, what the wrinkle was, and how to get it.
       table, not from memory**; re-fuzz **after the last commit**
 - [ ] **§4.8** numbers audit — all **six** questions answered **in writing** for every new number
 - [ ] **§4.8 Q4** the rendered **HTML dashboard** grepped for every failure state
+- [ ] **§4.8 Q4** every caveat followed to a **string a human sees** — not just to a field
+- [ ] **§4.8 §5.5** if the number is an **instrument**, a deliberately WRONG subject scores WORSE
+- [ ] every guard added to N call sites — **grep for the N+1th** (`cmd_artifact` was the one missed)
 - [ ] **§5** live test driven; real state read-only and **hash-identical** after
 - [ ] **§5.5** agent dogfood — **uncontaminated** (agents got exactly what the skill gives them)
 - [ ] **§5.6** **USER SESSION run; report written; verdict = ship**
@@ -569,7 +640,7 @@ shipped, what the wrinkle was, and how to get it.
 | **5** live test | disjoint buckets **silently ate a real day-11 review** while reporting "no reviews yet" |
 | **5.5** dogfood | the pipeline held — and the *first* dogfood **certified a dead feature**, because the prompt handed the assessor the answer |
 | **5.6** user session | the founder encoded 7 concepts and reviewed **0**. Every test was green. The product had already failed. And in v0.7 it killed a line that put a caveat on a number **that did not exist** |
-| **7.5** post-release review | **2 HIGH bugs in shipped code** — the honest denominator wasn't honest; the normal settle path destroyed the learner's work |
+| **7.5** post-release review | **2 HIGH bugs in shipped code** (v0.6) — the honest denominator wasn't honest; the normal settle path destroyed the learner's work. Then v0.7: **the gold set built to catch a lenient grader was REWARDING leniency** — a fooled grader outscored a correct one, and eight gates had walked past it because every one of them tested the grader and **not one tested the ruler** |
 
 **The pattern, stated once:** *every test you write confirms what you already believe. The things
 that found real bugs were the ones you did not control — a fuzzer, a reviewer, and a real session
@@ -577,6 +648,20 @@ with a real human who did not come back.*
 
 **The v0.7 corollary, and it is the sharpest one yet:** *the gate you build to catch a bug class
 will not catch that bug class in itself.* v0.6's fuzz gate missed `next`. v0.7's numbers audit —
-the gate that exists for unlabelled denominators — **shipped two unlabelled denominators**, and
-the release built to make the grader's failures visible **hid them from the dashboard.** Run every
-gate against the release that adds it, and then have someone else run it again.
+the gate that exists for unlabelled denominators — **shipped two unlabelled denominators**; the
+release built to make the grader's failures visible **hid them from the dashboard**; and the gold
+set built to catch a grader fooled by fluency **was itself adjudicated by an author fooled by
+fluency, on a fluent-but-empty item.** Run every gate against the release that adds it, and then
+have someone else run it again.
+
+**And the deepest version of it, which is the reason §7.5 exists and is not optional:**
+
+> **You cannot audit your own instrument.** Not because you are careless — because the instrument
+> *is* your judgment, rendered in data. Every gate in this file is run by the person who wrote the
+> code, and they will confirm what that person already believes. The only things that have ever
+> found a real bug here are the ones that do not share the author's mind: **a fuzzer** (which has
+> no beliefs), **a reviewer** (whose beliefs are different), and **a real learner who did not come
+> back** (whose behaviour is not a belief at all).
+>
+> Budget for all three, every release. They are not overhead. They are the only measurement in the
+> building that is not looking in a mirror.
