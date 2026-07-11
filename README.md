@@ -3,12 +3,12 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-0.9.0-6D4AA8.svg" alt="Version 0.9.0">
+  <img src="https://img.shields.io/badge/version-1.0.0-6D4AA8.svg" alt="Version 1.0.0">
   <img src="https://img.shields.io/badge/license-MIT-yellow.svg" alt="MIT License">
-  <img src="https://img.shields.io/badge/selftest-201%2F201-3E7D5A.svg" alt="201/201 checks">
+  <img src="https://img.shields.io/badge/selftest-207%2F207-3E7D5A.svg" alt="207/207 checks">
   <a href="gold/assessor-gold.jsonl"><img src="https://img.shields.io/badge/grader%20never%20inflates-0%2F198-3E7D5A.svg" alt="0 of 198 blind judgments graded up"></a>
   <img src="https://img.shields.io/badge/scheduler-FSRS--4.5-6D4AA8.svg" alt="FSRS-4.5">
-  <img src="https://img.shields.io/badge/data-100%25%20local-3E7D5A.svg" alt="100% local">
+  <a href="CONTRIBUTING-DATA.md"><img src="https://img.shields.io/badge/data-100%25%20local-3E7D5A.svg" alt="100% local — the engine has no network code, proven by a permanent selftest"></a>
   <a href="https://discord.gg/temm1e"><img src="https://img.shields.io/badge/discord-community-5865F2.svg" alt="Discord community"></a>
 </p>
 
@@ -217,6 +217,42 @@ One genuine disagreement (`g_054`) is **deliberately left in**, because the revi
 
 ---
 
+## The Commons (v1.0)
+
+The evidence base of learning science is built on **undergraduates, word pairs, and 20-minute retention intervals.** Almost nothing tests *self-directed adults*, on *hard conceptual material*, at *30–90 day horizons*, with *blind-graded free recall*.
+
+That is not a gap anyone chose. It is a gap because, until roughly 2026, **grading free recall at scale was impossible** — you needed a human to read every answer.
+
+Engram produces exactly that data as a byproduct of being useful, on hundreds of machines, with a **measured** grader behind every verdict. And the open question is sitting right there: [Kestin et al. (Harvard, *Scientific Reports*, 2025)](https://www.nature.com/articles/s41598-025-97652-6) found an AI tutor built on this exact dialogue grammar produced **~2× the learning gains of an active-learning classroom, in less time** — measured on an **immediate post-test.** **Nobody has ever measured whether AI-tutoring gains survive to thirty days.**
+
+```bash
+python3 scripts/engram.py export --contributor "@you"     # writes a FILE. Sends nothing.
+```
+
+**Then read the file.** It is short, it is yours, and nothing has left your machine.
+
+| leaves | never leaves |
+|---|---|
+| grades, ratings, confidence | **your productions** — every word you wrote |
+| timings, stability, intervals, retrievability | **probes, claims, rubrics** |
+| `kind`, `artifact`, `arm`, `stratum` | **goals, interests, misconception text** |
+| `grader` and its **measured QWK** | **topic names and node ids** — hashed, not carried |
+
+**Four things make that a promise rather than a hope:**
+
+- **The payload is a WHITELIST.** Every field is constructed by name. There is *no code path* by which a production could arrive — not *"we remembered to delete it."* A blacklist is a promise you must keep every release; a whitelist is one you keep by construction.
+- **The `stripped` list ships INSIDE the file**, so the promise is verifiable by the person making it, not merely asserted at them.
+- **An unaudited grader cannot contribute.** `export` **refuses** — a refusal, not a warning. *A finding aggregated from unaudited oracles is not a finding; it is noise with a schema.* **v0.7 gates v1.0.**
+- **The engine has no network code.** Not "none by default" — **none.** A **permanent selftest parses the engine's own AST** (not a grep — the first draft found the word `curl` in its *own comment*) and fails the build if anyone ever adds `import socket` to make one thing convenient. `export` writes a file and stops; the **agent** posts, via `gh`, only on an explicit yes.
+
+**And it is ATTRIBUTED — we are not going to lie to you about that.** `gh` posts from your account. A "salted anonymous hash" riding inside a signed envelope would be theatre the moment the envelope is signed. You cannot have one-keystroke upload *and* anonymity; pick one, and say which out loud. **Attribution is also the stronger science:** a retention study lives on **longitudinal linkage** — following *the same learner across months* **is** the question — so attributed n=100 beats anonymous n=500.
+
+This is not telemetry. **It is a consenting, named, informed participant in an open study** — which is what every good study has always had. **Withdrawal is: it's a GitHub post, delete it.** That is the entire mechanism, deliberately.
+
+**Read the whole thing before you decide: [CONTRIBUTING-DATA.md](CONTRIBUTING-DATA.md).**
+
+---
+
 ## What it looks like
 
 **Your mastery map**, any time (`/learn` shows it, `/coach` renders the full dashboard):
@@ -295,8 +331,9 @@ The model never does calendar math; this does:
 | **`capstone --topic T`** | materialize the build as a real NODE in the DAG (idempotent). New topics get one from `add-topic`; it requires every concept, so it cannot be silently skipped |
 | `stats` / `report` | telemetry JSON (incl. `modality` — explorable vs dialogue retention) · self-contained HTML dashboard |
 | `refit` | fit review intervals to your measured recall (guarded, ≥50 reviews) |
+| **`export [--topic T]`** | a **text-stripped**, **attributed** receipt bundle written **to a file**. Whitelist-constructed — there is no code path by which a production could leave. **Refuses** if your grader is unaudited |
 | `session-start` / `log-session` | ambient nudge (hook) · session telemetry |
-| `selftest` | 201 checks| 200 checks| 192 checks| 191 checks over the FSRS math, state machine, adherence/retention arithmetic, the grader-audit statistics, and every hardened boundary |
+| `selftest` | 207 checks| 201 checks| 200 checks| 192 checks| 191 checks over the FSRS math, state machine, adherence/retention arithmetic, the grader-audit statistics, and every hardened boundary |
 
 </details>
 

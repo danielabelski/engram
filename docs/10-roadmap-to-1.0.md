@@ -341,7 +341,25 @@ computed by `engram.py`, never accepted from a payload.
 
 ---
 
-# v1.0 — **The Commons**
+# v1.0 — **The Commons** — ✅ SHIPPED 2026-07-11
+
+> **RESULT.** `export` writes a **text-stripped, attributed** receipt bundle **to a file** — payload
+> constructed from a **whitelist**, so there is no code path by which a production could leave. A
+> property-based selftest puts a canary in every field the schema has (*and some it doesn't*) and
+> asserts not one character survives. The `stripped` list ships **inside** the file.
+>
+> **v0.7 gates v1.0, and the gate is a refusal:** `export` will not run for an unaudited or failed
+> grader. Every shared receipt carries its oracle's **measured QWK**, and the bundle carries the gold
+> set's own **circularity limit**.
+>
+> **The engine has no network code — structurally, permanently, and mutation-tested by INTRODUCING
+> the thing.** The check parses the engine's **AST** (the first draft grepped its own source for
+> `curl` and found it *in its own comment* — it failed on itself). Four mutations add a real `import
+> socket` / `urllib` / `subprocess` / `os.system("curl …")`, and all four go red.
+>
+> **It is ATTRIBUTED, and it says so out loud.** `gh` posts from your account; a salted anonymous
+> hash inside a signed envelope would be theatre. Attribution is also the stronger science —
+> longitudinal linkage *is* the question.
 
 > *The first learning system that is also an experiment the whole field can read.*
 
@@ -378,13 +396,18 @@ recall at scale was impossible.
 
 ### Done
 
-- [ ] `export` produces a file containing **zero** free text (selftest greps for it).
-- [ ] `grep -rE 'socket|urllib|requests|http' scripts/engram.py` → **zero hits.** The promise is
-      structural, and it is a permanent selftest.
-- [ ] `/coach contribute` works with `gh` **and degrades silently without it.**
-- [ ] `CONTRIBUTING-DATA.md` exists and is a real informed-consent document: what leaves, what never
-      leaves, that it is **public and attributed**, and how to delete it.
-- [ ] First open finding published from N ≥ 100 learners, with its confounds stated in public.
+- [x] `export` produces a file containing **zero** free text — proven by a **property-based** selftest
+      (canary in every field, including one the schema does not have), not a grep.
+- [x] **The no-network test is a permanent selftest**, and it parses the **AST** rather than grepping
+      (a grep finds the word in its own comment). Mutation-tested by *adding* `import socket`.
+- [x] `/coach contribute` — shows the file, names the handle **before** asking, and **degrades to
+      silence** on any `gh` failure. *Declining costs the learner nothing, or the consent is not real.*
+- [x] `CONTRIBUTING-DATA.md` — a real informed-consent document, including the honest hash caveat
+      (a common topic name is recoverable by dictionary attack) and the withdrawal mechanism
+      (*it is a GitHub post — delete it*).
+- [x] `export` **refuses** when `grader_unvalidated`. A refusal, not a warning.
+- [ ] **First open finding published from N ≥ 100 learners, with its confounds stated in public.**
+      ← the only thing left, and it is not a code task. It needs learners who came back.
 
 ### Selftests
 

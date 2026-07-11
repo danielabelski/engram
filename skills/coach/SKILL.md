@@ -185,6 +185,51 @@ The engine returns per-arm n and means, the effect, an **exact randomization tes
 
 On consent, update `strategy_weights` via `model --set`, quoting the engine's numbers back.
 
+## `contribute` — the Commons (v1.0)
+
+**Nothing is automatic. Nothing is on by default. Do not offer this unprompted more than once, ever.**
+
+```bash
+python3 "$ENGRAM" export --contributor "@<their-handle>"
+```
+
+The engine writes a **file**. It sends nothing — `engram.py` contains **no network code**, and a selftest proves it on every run by parsing its own AST. **You** are the one with Bash. **You** post, and only on an explicit yes.
+
+### Four steps, and none may be skipped
+
+1. **`export` first, and SHOW THEM THE FILE.** Not a summary of it — the real path, the real keys. *"Here's the file. Open it. It's short."* If they'd rather not read it, that's their call — but the offer to read it is not optional.
+
+   If `export` **refuses** (`grader_unvalidated`), relay the refusal and **stop**: *"Your grader hasn't been audited, so this data isn't evidence yet — it's noise with a schema. `/coach audit` is four minutes."* **Never pass `--allow-unvalidated`.** It exists for tests.
+
+2. **Say what leaves and what does not, in one breath, without softening it:**
+
+   > *"Grades, timings, stability numbers, the experimental arm, and your grader's measured QWK. **Not** your answers. **Not** the probes. **Not** your goals. **Not** the topic names — those are hashed. The full stripped list is inside the file."*
+
+   And the caveat, out loud, because it is real: **a hash of a common topic name (`transformers`) is recoverable by dictionary attack.** It hides the topic from a casual reader, not from someone who wants it. *"If a topic's name is sensitive to you, don't contribute that topic — `export --topic T` lets you pick."*
+
+3. **Say the identity part BEFORE you ask, not after.**
+
+   > *"This posts **publicly**, on GitHub, **as @their-handle**. It is not anonymous and we're not going to pretend it is — `gh` posts from your account, so a 'salted anonymous hash' would be theatre. Attribution is also the better science: a retention study has to follow **the same learner across months**, and that is the whole question."*
+
+4. **Then, and only then, ask** — arrow-key `AskUserQuestion`, with the handle **in the option text**. Post only on an explicit yes:
+
+```bash
+gh auth status                      # present and authenticated?
+gh api user --jq .login             # the handle it will ACTUALLY post as — show them THIS one
+gh api repos/nagisanzenin/engram-data/discussions -f title="…" -f body="…"
+```
+
+### ⚠ Degrade to silence. This is what makes the consent real.
+
+**No `gh`. Not authenticated. Offline. Any failure at all** → **print the path, one line, stop.**
+
+- **No error. No retry. No nag. No *"you can install gh with…"*.**
+- The file is still written. It is still theirs. Nothing was lost.
+
+> **`gh` is a convenience, never a dependency — and declining must cost the learner nothing, or the consent is not real.** A person who feels a cost in saying no has not consented. They have complied.
+
+Point them at **[CONTRIBUTING-DATA.md](../../CONTRIBUTING-DATA.md)** for the full document — including how to withdraw, which is: **it is a GitHub post; delete it.** That is the entire mechanism, deliberately.
+
 ## `schedule`
 
 Read `rhythms` + sessions.jsonl patterns; offer (never impose): best-slot suggestions, spacing-across-nights reminders if they cram (foundations P11 — say it as their data: "3 sessions Tuesday, none since; spaced would beat this by your own week-bucket numbers"), and a default-mode change if sessions routinely run over.

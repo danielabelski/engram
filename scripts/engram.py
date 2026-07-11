@@ -14,6 +14,7 @@ Test hooks: ENGRAM_TODAY=YYYY-MM-DD freezes "today"; `selftest` runs in a tempdi
 """
 
 import argparse
+import hashlib
 import itertools
 import json
 import math
@@ -28,6 +29,10 @@ from datetime import date, timedelta
 from html import escape
 
 SCHEMA = 1
+# The one place the engine knows its own version. Read by `export`, so a shared receipt states
+# which engine produced it — a corpus of receipts from unknown engine versions is not a corpus.
+# Pinned against .claude-plugin/plugin.json by a selftest, so it cannot drift.
+ENGRAM_VERSION = "1.0.0"
 RETENTION_DEFAULT = 0.90
 INTERVAL_MAX = 365
 RETENTION_MIN, RETENTION_MAX = 0.70, 0.97   # sane desired-retention bounds
@@ -530,7 +535,7 @@ def cmd_init(_args):
     # local-gold.jsonl additions. The bundled gold set is NOT copied here on purpose — a
     # copy would shadow the plugin's set forever, so a v0.8 gold item would never reach a
     # v0.7 learner. The plugin's file is the source of truth; local is additive.
-    for sub in ("graphs", "receipts", "artifacts", "audits", "gold"):
+    for sub in ("graphs", "receipts", "artifacts", "audits", "gold", "exports"):
         os.makedirs(p(sub), exist_ok=True)
     for f, default in (("misconceptions.json", []), ("experiments.json", [])):
         if read_json(p(f)) is None:
@@ -3635,6 +3640,146 @@ def cmd_refit(args):
 
 # ---------------------------------------------------------------- doctor
 
+# ============================================================ THE COMMONS (v1.0)
+# The evidence base of learning science is built on undergraduates, word pairs, and 20-minute
+# retention intervals. **Almost nothing tests self-directed adults, on hard conceptual material,
+# at 30-90 day horizons, with blind-graded free recall.** Engram produces exactly that data as a
+# byproduct of being useful — and, since v0.7, with a MEASURED oracle behind every grade.
+#
+# ── THE PROMISE, AND WHY IT IS STRUCTURAL RATHER THAN TRUSTED ──────────────────────────────
+#
+# 1. **The engine never grows a socket.** `export` writes a FILE and stops. The *agent* — which
+#    already has Bash and is already trusted with the machine — does the posting, via `gh`, only
+#    after an explicit human yes. The 100%-local badge stays true because the thing it is about
+#    (`engram.py`) contains zero network code, and a permanent selftest proves it on every run.
+#
+# 2. **The payload is a WHITELIST.** Not "we remembered to delete the productions" — *there is no
+#    code path by which a production could arrive.* Every field is constructed by name. A field
+#    added to a receipt in v1.1 cannot leak by being forgotten in a delete-list, which is the
+#    same lesson `gold` taught in v0.7 and the reason both are built the same way.
+#
+# 3. **`stripped` ships INSIDE the file.** The promise is verifiable by the person making it, not
+#    merely asserted at them.
+#
+# 4. **It is ATTRIBUTED, and it says so.** `gh` posts from your account. A "salted anonymous hash"
+#    riding inside a signed envelope would be a lie, so Engram does not tell it. Attribution is
+#    also the *stronger* design: a retention study lives on LONGITUDINAL LINKAGE — following the
+#    same learner across months IS the question — and attributed n=100 beats anonymous n=500.
+#
+# 5. **An unaudited oracle cannot contribute.** Every shared grade came from the assessor; if
+#    nobody has measured it, the data is not evidence, it is noise with a schema. **v0.7 gates
+#    v1.0, and the gate is a refusal, not a warning.**
+
+EXPORT_STRIPPED = ("production", "probe", "claim", "rubric", "goal", "interests",
+                   "misconceptions", "misconception_text", "rubric_notes", "feedback_line",
+                   "topic_string", "node_id", "title", "why_chain", "transfer_probe",
+                   "commitment", "notes", "question")
+# The ONLY keys that may appear on an exported receipt. Constructed by name; nothing else can
+# arrive. (A blacklist is a promise you have to keep every release. A whitelist is one you keep
+# by construction.)
+EXPORT_RECEIPT_KEYS = ("topic_hash", "node_hash", "kind", "grade", "rating", "confidence",
+                       "days_since_encode", "s_before", "s_after", "interval_days",
+                       "retrievability", "artifact", "arm", "stratum", "grader", "grader_qwk")
+
+def _hash12(s):
+    """A stable 12-hex-char digest. Groups a learner's own receipts and lets the corpus compare
+    WITHIN a topic — without the topic string leaving.
+
+    **And the honest caveat, which ships in the file:** a hash of a COMMON topic string
+    ("transformers", "bayes") is recoverable by dictionary attack in seconds. This hides the
+    string from a casual reader; it does not hide it from someone who wants it, and the export is
+    ATTRIBUTED anyway. If a topic's NAME is sensitive, do not contribute that topic — `export
+    --topic T` exists so you can choose."""
+    return hashlib.sha256(("engram/v1|" + str(s)).encode("utf-8")).hexdigest()[:12]
+
+def cmd_export(args):
+    """Write a text-stripped receipt bundle to a file. NO NETWORK. The agent posts, on consent."""
+    gh = compute_grader_health()
+    if gh["grader_unvalidated"] and not getattr(args, "allow_unvalidated", False):
+        die("REFUSING TO EXPORT: the grader behind every one of these grades is %s (%s).\n"
+            "  A finding aggregated from unaudited oracles is not a finding — it is noise with a\n"
+            "  schema, and publishing it would put a number into the world that nobody can stand\n"
+            "  behind. This is the gate v0.7 exists to be.\n"
+            "  Run `/coach audit` (about four minutes), then export."
+            % (gh["verdict"], gh.get("stamp") or gh.get("read", "")[:80]))
+
+    qwk = gh.get("qwk")
+    # arm/stratum, joined from the pre-registered experiment log — so a shared receipt carries the
+    # condition it was collected under, which is the difference between data and an anecdote.
+    arms = {}
+    for e in _as_list(read_json(p("experiments.json"), [])):
+        if not isinstance(e, dict):
+            continue
+        for a in (e.get("assignments") if isinstance(e.get("assignments"), list) else []):
+            if isinstance(a, dict) and isinstance(a.get("topic"), str) \
+                    and isinstance(a.get("node"), str):
+                arms[(a["topic"], a["node"])] = (a.get("arm"), a.get("stratum"))
+
+    topics = [args.topic] if getattr(args, "topic", None) else all_topics()
+    out, skipped = [], 0
+    for t in topics:
+        for r in read_jsonl(p("receipts", t + ".jsonl")):
+            if not isinstance(r, dict) or not isinstance(r.get("node"), str):
+                skipped += 1
+                continue
+            arm, stratum = arms.get((t, r["node"]), (None, None))
+            # CONSTRUCTED BY NAME. There is no path by which a production could arrive here.
+            rec = {
+                "topic_hash": _hash12(t),
+                "node_hash": _hash12("%s/%s" % (t, r["node"])),
+                "kind": r.get("kind"), "grade": r.get("grade"), "rating": r.get("rating"),
+                "confidence": clean_confidence(r.get("confidence")),
+                "days_since_encode": as_number(r.get("days_since_encode")),
+                "s_before": as_number(r.get("s_before")),
+                "s_after": as_number(r.get("s_after")),
+                "interval_days": as_number(r.get("interval_days")),
+                "retrievability": as_number(r.get("retrievability")),
+                "artifact": bool(r.get("artifact")),
+                "arm": arm if isinstance(arm, str) else None,
+                "stratum": stratum if isinstance(stratum, str) else None,
+                "grader": r.get("grader") if isinstance(r.get("grader"), str) else None,
+                "grader_qwk": qwk,          # a receipt carries its oracle's MEASURED validity
+            }
+            out.append({k: rec[k] for k in EXPORT_RECEIPT_KEYS})
+
+    bundle = {
+        "engram_version": ENGRAM_VERSION,
+        "exported": today().isoformat(),
+        # The engine NEVER guesses your identity. You type it, or it stays null and the `gh` post
+        # carries it anyway — which is the whole reason the anonymity claim would have been a lie.
+        "contributor": (args.contributor if isinstance(getattr(args, "contributor", None), str)
+                        and args.contributor else None),
+        "attributed": True,
+        "grader": {"verdict": gh.get("verdict"), "qwk": qwk,
+                   "leniency_bias": gh.get("leniency_bias"),
+                   "gold_adjudication": gh.get("gold_adjudication"),
+                   "direction": gh.get("direction")},
+        "n_receipts": len(out),
+        "receipts": out,
+        "stripped": list(EXPORT_STRIPPED),
+        "topic_hash_note": ("topic/node strings are hashed, not carried. A hash of a COMMON topic "
+                            "name is recoverable by dictionary attack — this hides the string from "
+                            "a casual reader, not from someone who wants it. The export is "
+                            "ATTRIBUTED regardless. If a topic's NAME is sensitive, do not "
+                            "contribute it: `export --topic T` exports one topic at a time."),
+        "consent_note": ("NOTHING HAS BEEN SENT. This is a file on your disk. `engram.py` contains "
+                         "no network code and never will — read it. Only you, via /coach "
+                         "contribute and an explicit yes, can post it, and it posts PUBLICLY under "
+                         "your GitHub handle."),
+    }
+    os.makedirs(p("exports"), exist_ok=True)
+    seq = 1
+    while os.path.exists(p("exports", "%s-%02d.json" % (bundle["exported"], seq))):
+        seq += 1
+    path = p("exports", "%s-%02d.json" % (bundle["exported"], seq))
+    write_json(path, bundle)
+    emit({"ok": True, "path": path, "n_receipts": len(out),
+          "skipped_malformed": skipped,
+          "grader_qwk": qwk, "attributed": True,
+          "read": ("wrote %d receipts to %s — text-stripped, %d field types removed, and NOTHING "
+                   "has left this machine. Read the file. Then, if you want to: /coach contribute."
+                   % (len(out), path, len(EXPORT_STRIPPED)))})
+
 def cmd_doctor(_args):
     issues = []
     notes = []   # non-failing observations with a fix path (doctor stays ok)
@@ -6388,6 +6533,160 @@ def cmd_selftest(_args):
         return first["id"] == "r1" and r["buckets"]["30d"]["n"] == 1
     check("a receipt with a missing ts sorts last and never becomes the day-0 anchor",
           fresh(_broken_ts_never_anchors))
+    # ================================================== THE COMMONS (v1.0)
+
+    # ⚠⚠ THE PERMANENT SELFTEST. This one never gets deleted. ⚠⚠
+    #
+    # The README says the data is 100% local, and the reason anyone believes it is that the engine
+    # CANNOT phone home — not that it currently chooses not to. This check makes that a property
+    # of the source rather than a promise in a paragraph, and it runs on every single invocation
+    # of `selftest`, forever. If a future release adds `import requests` to make one thing
+    # convenient, this goes red before the feature ever ships.
+    #
+    # v1.0 could have grown a socket for `/coach contribute`. It did not. The AGENT posts — via
+    # `gh`, which is already installed, already authenticated, and already trusted with the whole
+    # machine — and `engram.py` writes a file and stops. That is not a loophole; it is the correct
+    # place to put the boundary, because the thing the badge is ABOUT is this file.
+    # Parsed as an **AST**, not grepped. A regex over the source finds the words in its OWN
+    # comment and in its OWN pattern literal — the first draft of this check failed on itself,
+    # which is funny exactly once and would have been a permanent red herring. The AST cannot see
+    # a comment or a string; it sees only what the interpreter will actually execute. That is the
+    # only thing a structural guarantee is allowed to be about.
+    import ast as _ast
+    _tree = _ast.parse(open(os.path.realpath(__file__), encoding="utf-8").read())
+    _BANNED_MODULES = {
+        "socket", "ssl", "select", "selectors", "asyncio",
+        "urllib", "http", "requests", "aiohttp", "httpx", "websockets",
+        "ftplib", "telnetlib", "smtplib", "poplib", "imaplib", "nntplib",
+        "xmlrpc", "socketserver", "webbrowser", "ssl",
+        "subprocess",                      # the engine never shells out — the AGENT runs `gh`
+    }
+    _imports, _shells = [], []
+    for _n in _ast.walk(_tree):
+        if isinstance(_n, _ast.Import):
+            _imports += [a.name.split(".")[0] for a in _n.names]
+        elif isinstance(_n, _ast.ImportFrom) and _n.module:
+            _imports.append(_n.module.split(".")[0])
+        elif isinstance(_n, _ast.Call):
+            _f = _n.func
+            # os.system(...) / os.popen(...) / os.exec*(...) / os.spawn*(...)
+            if isinstance(_f, _ast.Attribute) and isinstance(_f.value, _ast.Name) \
+                    and _f.value.id == "os" \
+                    and (_f.attr in ("system", "popen")
+                         or _f.attr.startswith("exec") or _f.attr.startswith("spawn")):
+                _shells.append("os." + _f.attr)
+    _net = sorted(set(_imports) & _BANNED_MODULES)
+    check("⚠ THE ENGINE HAS NO NETWORK CODE — structural, permanent, and never to be deleted",
+          not _net)
+    # …and it does not shell out to one either. A `curl` inside an `os.system` would satisfy the
+    # check above while phoning home just as hard.
+    check("⚠ …and it never SHELLS OUT (no subprocess, no os.system/popen/exec/spawn)",
+          not _shells)
+
+    # -- the engine's version cannot drift from the plugin manifest --
+    def _version_matches_the_manifest(_h=None):
+        mf = os.path.join(_plugin_root(), ".claude-plugin", "plugin.json")
+        return json.load(open(mf, encoding="utf-8"))["version"] == ENGRAM_VERSION
+    check("ENGRAM_VERSION matches .claude-plugin/plugin.json (a shared receipt names its engine)",
+          _version_matches_the_manifest)
+
+    # -- ⚠ PROPERTY-BASED: put text in EVERY field. Assert NONE of it survives the export. --
+    # Not "we remembered to delete the productions" — there must be no code path by which one
+    # could arrive. The payload is constructed BY NAME from a whitelist, which is the same lesson
+    # `gold` taught in v0.7 and the reason both are built the same way: a blacklist is a promise
+    # you must keep every release; a whitelist is one you keep by construction.
+    def _export_leaks_nothing(h):
+        SECRET = "CANARY-7f3a-DO-NOT-LEAK"
+        _add_ab()
+        # a receipt with the canary in every free-text field the schema has (and some it doesn't)
+        _capture(cmd_rate, _ns(topic="t", node="a", rating="good", grade="recalled",
+                               kind="encode", production=SECRET, probe=SECRET, confidence=70))
+        append_jsonl(p("receipts", "t.jsonl"), {
+            "id": "r_x", "ts": "2026-07-20", "topic": "t", "node": "a", "kind": "review",
+            "rating": "good", "grade": "recalled",
+            "production": SECRET, "probe": SECRET, "claim": SECRET, "rubric": [SECRET],
+            "rubric_notes": SECRET, "feedback_line": SECRET, "misconceptions": [SECRET],
+            "a_field_invented_in_v1_1": SECRET,      # ← the whole point of a whitelist
+        })
+        _RECEIPTS_CACHE.clear()
+        _capture(cmd_misconception, _ns(action="add", topic="t", node="a", json=None, file=None,
+                                        description=SECRET, id=None))
+        _capture(cmd_model, _ns(set=None, add_goal=SECRET, add_interest=SECRET, json=None,
+                                file=None))
+        # a PASSING audit, so the export gate opens
+        gold = [_gitem("e%02d" % i, _ORD[i % 3]) for i in range(33)]
+        run = [{"sid": g["sid"], "grade": g["gold_grade"]} for g in gold]
+        _audit(h, gold, [run, run, run])
+        res = _capture_json(cmd_export, _ns(topic=None, contributor="@me",
+                                            allow_unvalidated=False))
+        blob = open(res["path"], encoding="utf-8").read()
+        bundle = json.loads(blob)
+        keys = {k for r in bundle["receipts"] for k in r}
+        return (SECRET not in blob                          # ← THE PROPERTY
+                and "transformers" not in blob              # (no topic strings, ever)
+                and keys == set(EXPORT_RECEIPT_KEYS)        # …by construction, not by deletion
+                and "t" not in {r.get("topic_hash") for r in bundle["receipts"]}
+                and bundle["stripped"]                      # the promise ships INSIDE the file
+                and bundle["attributed"] is True
+                and bundle["contributor"] == "@me"
+                and bundle["n_receipts"] == 2)
+    check("⚠ EXPORT LEAKS NOTHING: text in every field, and not one character of it survives",
+          fresh(_export_leaks_nothing))
+
+    # -- v0.7 GATES v1.0: an unaudited oracle may not contribute. It is a REFUSAL, not a warning. --
+    def _export_refuses_an_unvalidated_grader(h):
+        _add_ab()
+        _capture(cmd_rate, _ns(topic="t", node="a", rating="good", grade="recalled",
+                               kind="encode", production="x"))
+        try:
+            _capture(cmd_export, _ns(topic=None, contributor=None, allow_unvalidated=False))
+            return False                       # it exported data from an oracle nobody checked
+        except SystemExit:
+            pass
+        no_file = not os.path.isdir(p("exports")) or not os.listdir(p("exports"))
+        # …and a FAILED audit is refused just as hard as an absent one
+        gold = [_gitem("f%02d" % i, "partial") for i in range(33)]
+        run = [{"sid": g["sid"], "grade": "recalled"} for g in gold]      # inflates everything
+        a = _audit(h, gold, [run, run, run])
+        try:
+            _capture(cmd_export, _ns(topic=None, contributor=None, allow_unvalidated=False))
+            return False
+        except SystemExit:
+            pass
+        # …and once it PASSES, the gate opens
+        gold2 = [_gitem("g%02d" % i, _ORD[i % 3]) for i in range(33)]
+        run2 = [{"sid": g["sid"], "grade": g["gold_grade"]} for g in gold2]
+        _audit(h, gold2, [run2, run2, run2])
+        res = _capture_json(cmd_export, _ns(topic=None, contributor=None,
+                                            allow_unvalidated=False))
+        return (no_file and a["verdict"] == "fail" and res["ok"] is True
+                and res["grader_qwk"] == 1.0)
+    check("⚠ v0.7 GATES v1.0: `export` REFUSES an unaudited or failed grader (a refusal, not a warning)",
+          fresh(_export_refuses_an_unvalidated_grader))
+
+    # -- every shared receipt carries its oracle's MEASURED validity --
+    def _every_receipt_carries_its_graders_qwk(h):
+        _add_ab()
+        _capture(cmd_rate, _ns(topic="t", node="a", rating="good", grade="recalled",
+                               kind="encode", production="x"))
+        gold = [_gitem("h%02d" % i, _ORD[i % 3]) for i in range(33)]
+        # a grader that is right 32/33 -> a real, sub-1.0 QWK
+        run = [{"sid": g["sid"],
+                "grade": ("partial" if g["sid"] == "h00" and g["gold_grade"] == "lapsed"
+                          else g["gold_grade"])} for g in gold]
+        a = _audit(h, gold, [run, run, run])
+        res = _capture_json(cmd_export, _ns(topic=None, contributor=None,
+                                            allow_unvalidated=False))
+        b = json.load(open(res["path"], encoding="utf-8"))
+        return (a["verdict"] in ("pass", "warn")
+                and 0 < a["qwk"] < 1.0
+                and all(r["grader_qwk"] == a["qwk"] for r in b["receipts"])
+                and b["grader"]["qwk"] == a["qwk"]
+                # …and the gold set's own circularity limit rides along with it
+                and b["grader"]["gold_adjudication"] == "authored")
+    check("every SHARED receipt carries its grader's MEASURED QWK (a finding from an unaudited oracle is not one)",
+          fresh(_every_receipt_carries_its_graders_qwk))
+
     # -- READ PATHS DEGRADE, NEVER BRICK (hardened in v0.6 after a 3000-state fuzz) --
     # A hand-edited state file can be perfectly valid JSON with the WRONG TYPES: `nodes` as a
     # string, `fsrs` as a list, an unhashable `topic`, a `rating` that is a dict. Every one of
@@ -6970,6 +7269,13 @@ def main():
     sp = sub.add_parser("transfer")
     sp.add_argument("--topic"); sp.add_argument("--limit", type=int)
 
+    sp = sub.add_parser("export")
+    sp.add_argument("--topic", help="export ONE topic (default: all)")
+    sp.add_argument("--contributor", help="the handle this will be posted under. Typed by you; "
+                                          "the engine never guesses your identity.")
+    sp.add_argument("--allow-unvalidated", action="store_true",
+                    help=argparse.SUPPRESS)   # escape hatch for tests; /coach never passes it
+
     sp = sub.add_parser("capstone")
     sp.add_argument("--topic", required=True)
 
@@ -7065,6 +7371,7 @@ def main():
         "gold": cmd_gold, "assessor-audit": cmd_assessor_audit,
         "grader-health": cmd_grader_health,
         "transfer": cmd_transfer, "capstone": cmd_capstone,
+        "export": cmd_export,
     }
     # Serialize state mutators: the skills run engine processes concurrently by
     # design (background artifact-smith registering while the tutor rates), and
@@ -7079,7 +7386,7 @@ def main():
     # `transfer` is a pure read over graphs + receipts — it SERVES a probe, it never records one.
     mutating = {"init", "add-topic", "rate", "receipt", "stash", "model", "focus",
                 "visuals", "artifact", "misconception", "experiment",
-                "log-session", "refit", "commit", "assessor-audit", "capstone"}
+                "log-session", "refit", "commit", "assessor-audit", "capstone", "export"}
     if args.cmd in mutating:
         acquire_lock()
         try:

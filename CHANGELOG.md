@@ -1,5 +1,123 @@
 # Changelog
 
+## 1.0.0 — 2026-07-11 · THE COMMONS — the first learning system that is also an experiment the whole field can read
+
+The evidence base of learning science is built on **undergraduates, word pairs, and 20-minute
+retention intervals.** Almost nothing tests *self-directed adults*, on *hard conceptual material*,
+at *30–90 day horizons*, with *blind-graded free recall*.
+
+That is not a gap anyone chose. It is a gap because, until roughly 2026, **grading free recall at
+scale was impossible.** You needed a human to read every answer.
+
+Engram produces exactly that data as a byproduct of being useful — and, since v0.7, with a
+**measured** oracle behind every grade. The open question is sitting right there: an AI tutor built
+on this exact dialogue grammar produced **~2× the learning gains of an active-learning classroom**
+([Kestin et al., Harvard, *Scientific Reports*, 2025](https://www.nature.com/articles/s41598-025-97652-6))
+— measured on an **immediate post-test.** **Nobody has ever measured whether AI-tutoring gains
+survive to thirty days.**
+
+Selftest **201 → 207**.
+
+### `export` — a file, not a request
+
+```bash
+python3 scripts/engram.py export --contributor "@you"
+```
+
+| leaves | never leaves |
+|---|---|
+| grades, ratings, confidence | **your productions** — every word you wrote |
+| timings, stability, intervals, retrievability | **probes, claims, rubrics** |
+| `kind`, `artifact`, `arm`, `stratum` | **goals, interests, misconception text** |
+| `grader` and its **measured QWK** | **topic names and node ids** — hashed, not carried |
+
+- **The payload is a WHITELIST.** Every field is constructed by name. **There is no code path by
+  which a production could arrive** — not *"we remembered to delete it."* A blacklist is a promise
+  you must keep every release; a whitelist is one you keep by construction. (Same lesson `gold`
+  taught in v0.7, and the reason both are built the same way.) A **property-based selftest** puts a
+  canary string in *every* field the schema has — **and some it doesn't** — and asserts not one
+  character survives.
+- **The `stripped` list ships INSIDE the file**, so the promise is verifiable by the person making
+  it rather than merely asserted at them.
+- **The hash caveat, stated out loud:** a hash of a *common* topic name (`transformers`) is
+  recoverable by dictionary attack in seconds. It hides the topic from a casual reader, **not from
+  someone who wants it** — and the export is attributed anyway. `export --topic T` exists so you can
+  choose. *An honest caveat beats a fake guarantee.*
+
+### v0.7 GATES v1.0 — and it is a refusal, not a warning
+
+`export` **refuses** if your assessor has not passed its audit:
+
+```
+REFUSING TO EXPORT: the grader behind every one of these grades is unaudited.
+A finding aggregated from unaudited oracles is not a finding — it is noise with a schema,
+and publishing it would put a number into the world that nobody can stand behind.
+```
+
+Every shared receipt carries its grader's **measured QWK**, and the bundle carries the gold set's
+own **circularity limit** (`gold_adjudication: "authored"`). A number you cannot stand behind should
+not enter the world with your name on it.
+
+### THE ENGINE HAS NO NETWORK CODE — and that is now structural, permanent, and mutation-tested
+
+Not *"no network by default."* **None.**
+
+```
+⚠ THE ENGINE HAS NO NETWORK CODE — structural, permanent, and never to be deleted
+⚠ …and it never SHELLS OUT (no subprocess, no os.system/popen/exec/spawn)
+```
+
+- The check **parses the engine's own AST** — it does not grep. **The first draft grepped its own
+  source for the word `curl` and found it, in its own comment and inside its own regex literal. It
+  failed on itself.** The AST cannot see a comment or a string; it reports only what the interpreter
+  will actually execute. *If a structural guarantee can be defeated by a comment, it was never
+  structural.*
+- And it is **mutation-tested by INTRODUCING the thing** — four mutations add a real `import
+  socket`, a real `import urllib.request`, a real `import subprocess`, and a real
+  `os.system("curl …")`, and all four go red. **For an absence check, nulling the detector proves
+  nothing** — it just makes the check vacuously true, which is exactly what it already is on a clean
+  codebase. (Now written into the protocol.)
+
+`export` writes a file and stops. The **agent** posts — via `gh`, which is already installed,
+already authenticated, and already trusted with the whole machine. That is not a loophole; **it is
+the correct place to put the boundary**, because the thing the *100% local* badge is about is
+`engram.py`, and `engram.py` will never grow a socket.
+
+### It is ATTRIBUTED, and we are not going to lie to you about it
+
+`gh` posts from your account. A **"salted anonymous hash"** riding inside a signed envelope would be
+theatre the moment the envelope is signed. **You cannot have one-keystroke upload *and* anonymity.
+Pick one, and say which out loud.**
+
+**Attribution is also the stronger science.** A retention study lives on **longitudinal linkage** —
+following *the same learner across months* **is** the question. Attributed, linkable series at n=100
+are worth more than anonymous one-shot dumps at n=500. It also buys dedup, fabrication detection,
+the ability to ask a follow-up, and the ability to **credit you** — the only honest incentive on
+offer.
+
+This is not telemetry. **It is a consenting, named, informed participant in an open study**, which is
+what every good study has always had.
+
+### `/coach contribute` — and degrading to silence is what makes the consent real
+
+Shows you the file. Names the exact handle it will post under, **before** it asks. Posts only on an
+explicit yes.
+
+**No `gh`, not authenticated, offline, any failure at all → print the path, one line, stop.** No
+error. No retry. **No nag.** The file is still yours.
+
+> **`gh` is a convenience, never a dependency — and declining must cost the learner nothing, or the
+> consent is not real.** A person who feels a cost in saying no has not consented. They have complied.
+
+### Also
+
+- **[CONTRIBUTING-DATA.md](CONTRIBUTING-DATA.md)** — a real informed-consent document, not a privacy
+  policy. What leaves, what never does, that it is **public and attributed**, and how to withdraw
+  (**it is a GitHub post — delete it**; that is the entire mechanism, deliberately).
+- `ENGRAM_VERSION` — the engine finally knows its own version, pinned against the plugin manifest by
+  a selftest so it cannot drift. A corpus of receipts from unknown engine versions is not a corpus.
+- `exports/` created on `init`. Exports are append-only, like receipts and audits.
+
 ## 0.9.0 — 2026-07-11 · THE METHOD — the experiment machinery was not sound enough to support the claims it exists to make
 
 Article 7 (*"adapt on evidence, never taxonomy"*) is the article that replaces learning styles with

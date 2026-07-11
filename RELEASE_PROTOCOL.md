@@ -151,6 +151,26 @@ The **four** ways a check turns out fake, all seen for real:
   **A check is only real if it fails when ITS OWN fix is reverted.** When several guards overlap,
   build a fixture where all the others are silent.
 
+### ⚠ The special case: mutation-testing an ABSENCE check ⚠ NEW
+
+Some checks assert something **is not there** — *"the engine has no network code"*, *"no
+`subprocess`"*, *"no bare `n` key"*. **You cannot mutation-test those by breaking the detector.**
+Setting `_net = []` makes the check vacuously true — which is *exactly what it already is* on a
+clean codebase. It proves nothing at all.
+
+> **For an absence check, the mutation must INTRODUCE THE THING.**
+
+Add a real `import socket`. Add a real `os.system("curl …")`. Then demand the guard goes red.
+v1.0's no-network guarantee is worth something only because four mutations do precisely that, on
+every run of the suite, and the check catches all four.
+
+**And a related trap, from the very same check:** the first draft **grepped its own source** for
+the word `curl` — and found it, in its own comment and inside its own regex literal. **It failed on
+itself.** The fix was to parse the **AST**, which cannot see a comment or a string and reports only
+what the interpreter will actually execute.
+
+> *If a structural guarantee can be defeated by a comment, it was never structural.*
+
 ## 4.6 · The adversarial review (never skip; green tests are not evidence)
 
 ```bash
