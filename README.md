@@ -3,9 +3,9 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-0.8.0-6D4AA8.svg" alt="Version 0.8.0">
+  <img src="https://img.shields.io/badge/version-0.9.0-6D4AA8.svg" alt="Version 0.9.0">
   <img src="https://img.shields.io/badge/license-MIT-yellow.svg" alt="MIT License">
-  <img src="https://img.shields.io/badge/selftest-180%2F180-3E7D5A.svg" alt="180/180 checks">
+  <img src="https://img.shields.io/badge/selftest-190%2F190-3E7D5A.svg" alt="190/190 checks">
   <a href="gold/assessor-gold.jsonl"><img src="https://img.shields.io/badge/grader%20never%20inflates-0%2F198-3E7D5A.svg" alt="0 of 198 blind judgments graded up"></a>
   <img src="https://img.shields.io/badge/scheduler-FSRS--4.5-6D4AA8.svg" alt="FSRS-4.5">
   <img src="https://img.shields.io/badge/data-100%25%20local-3E7D5A.svg" alt="100% local">
@@ -283,7 +283,8 @@ The model never does calendar math; this does:
 | `next --topic T` / `due` | next frontier concept · due review queue (interleaved) |
 | `rate` / `receipt --file F` | apply one rating · apply assessor receipt batch |
 | `stash add\|list\|count\|clear` | crash-safe queue of answers awaiting grading |
-| `model` / `misconception` / `experiment` | open learner model · error catalog · n-of-1 trials |
+| `model` / `misconception` | open learner model · error catalog |
+| **`experiment start\|assign\|status\|settle`** | n-of-1 trials done properly: **randomized** (seeded, reproducible) · **stratified** (kills the material-vs-medium confound) · **pre-registered** · **powered** (15/arm) · and **the engine computes the verdict** — `--verdict` is refused |
 | `focus on\|off\|status` | toggle the ADHD Focus profile (Sprint default, growth every review, always-on amnesty) |
 | `visuals eager\|threshold\|off\|status` | the explorables dial: every high-affordance concept · portal concepts only (default) · none |
 | `artifact set\|clear\|list` | register a built explorable on its node (validated; powers regeneration tracking + the medium comparison) |
@@ -295,7 +296,7 @@ The model never does calendar math; this does:
 | `stats` / `report` | telemetry JSON (incl. `modality` — explorable vs dialogue retention) · self-contained HTML dashboard |
 | `refit` | fit review intervals to your measured recall (guarded, ≥50 reviews) |
 | `session-start` / `log-session` | ambient nudge (hook) · session telemetry |
-| `selftest` | 180 checks over the FSRS math, state machine, adherence/retention arithmetic, the grader-audit statistics, and every hardened boundary |
+| `selftest` | 190 checks over the FSRS math, state machine, adherence/retention arithmetic, the grader-audit statistics, and every hardened boundary |
 
 </details>
 
