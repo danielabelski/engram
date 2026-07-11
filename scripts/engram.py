@@ -84,6 +84,13 @@ def as_number(x, default=None):
         return float(x)
     return default
 
+def days_between(a_ts, b_ts):
+    """Elapsed days between two ISO dates; None if either is missing/garbled."""
+    a, b = safe_date(a_ts), safe_date(b_ts)
+    if a is None or b is None:
+        return None
+    return (b - a).days
+
 # ---------------------------------------------------------------- fsrs core
 
 def clamp(x, lo, hi):
@@ -287,8 +294,14 @@ DEFAULT_MODEL = {
     "interests": [],
     "goals": [],
     "strategy_weights": {"derivation_first": 0.6, "example_first": 0.4},
+    # `commitment` is the learner's implementation intention (if-then plan), in their own
+    # words — Gollwitzer & Sheeran 2006: 94 tests, N>8,000, d=0.65, robust to publication-bias
+    # correction. Stored because they said it, shown back at the moment it names, NEVER
+    # enforced (docs/07 §4). `decay_notice` gates the honest loss report on return: it is
+    # INFORMATION, never pressure (docs/05 P13), and it is off-switchable like `momentum`.
     "settings": {"default_mode": "standard", "artifacts": "threshold-only", "ambient": "quiet",
-                 "momentum": "on", "profile": None},
+                 "momentum": "on", "profile": None,
+                 "commitment": None, "decay_notice": "on"},
     "rhythms": {},
     "accessibility": [],
 }
@@ -312,6 +325,7 @@ def _deep_heal(m, default):
     return m
 
 def load_model():
+    """Load the learner model, persisting a self-heal. Callers MUST hold the state lock."""
     raw = read_json(p("learner-model.json"))
     if raw is None:
         m = json.loads(json.dumps(DEFAULT_MODEL))
@@ -323,6 +337,25 @@ def load_model():
     if json.dumps(m, sort_keys=True) != before:
         write_json(p("learner-model.json"), m)   # persist the repair once
     return m
+
+def read_model():
+    """Load the learner model WITHOUT persisting the self-heal — for read-only commands.
+
+    `decay`, `doctor` and `report` do not take the state lock (they are reads). But
+    `load_model` *writes* when it heals, so calling it from an unlocked path is a
+    last-writer-wins race against a concurrent locked mutator — a stale snapshot healed
+    and flushed by `report` could silently revert a `refit` or a `commit`. This is the
+    same class of bug the v0.5 review caught between the background artifact-smith and
+    the tutor's `rate`, and it has been latent in `report`/`doctor` since then.
+
+    The heal still happens in memory, so the caller sees a complete model; it is simply
+    not persisted. The next *mutating* command — which does hold the lock — persists it."""
+    raw = read_json(p("learner-model.json"))
+    if raw is None:
+        m = json.loads(json.dumps(DEFAULT_MODEL))
+        m["created"] = today().isoformat()
+        return m
+    return _deep_heal(raw, DEFAULT_MODEL)
 
 def load_graph(topic):
     require_slug(topic)
@@ -626,6 +659,13 @@ def due_items(topic_filter=None, limit=None, horizon_days=0):
                     "artifact": valid_artifact(node) is not None,
                     "due": fsrs.get("due"),
                     "overdue_days": (today() - due_d).days,
+                    # `last` (the last successful retrieval) is carried so current
+                    # retrievability can be computed EXACTLY. Reconstructing elapsed from
+                    # `interval_for(s, RETENTION_DEFAULT) + overdue` is wrong the moment a
+                    # learner changes `desired_retention` or carries an `interval_multiplier`
+                    # — and it errs toward overstating the decay, which is the one direction
+                    # an honesty feature is not allowed to err in.
+                    "last": fsrs.get("last"),
                     "s": fsrs.get("s"), "reps": fsrs.get("reps", 0),
                     "lapses": fsrs.get("lapses", 0),
                 })
@@ -674,9 +714,46 @@ def make_receipt(item, extra, kind):
         "source": item.get("source", "self"),
         **extra,
     }
+    # The stash id, threaded stash -> assessor -> receipt, is what makes `receipt --file`
+    # idempotent: apply_item refuses a sid already on disk (issue #3). Absent on hand-rolled
+    # `rate` calls, which is fine — they were never the double-apply risk.
+    sid = item.get("sid")
+    if isinstance(sid, str) and sid:
+        receipt["sid"] = sid
     if truncated:
         receipt["production_truncated"] = True
     return receipt
+
+# Receipt log cache, keyed by ABSOLUTE PATH (never by topic alone — selftest and any
+# ENGRAM_HOME switch would otherwise read one home's receipts while writing another's).
+# `cmd_receipt` applies a batch, and each item needs both the sid set and the node's
+# first-receipt ts; re-reading the whole log per item is O(items x receipts) — measured at
+# 1.85s for a 60-item settle against a 10k-line log. The cache is kept in sync on every
+# append, so a sid written *earlier in the same batch* is still caught, which it must be:
+# a batch can legitimately carry the same sid twice.
+_RECEIPTS_CACHE = {}
+
+def _receipts_for(topic):
+    path = p("receipts", topic + ".jsonl")
+    if path not in _RECEIPTS_CACHE:
+        _RECEIPTS_CACHE[path] = read_jsonl(path)
+    return _RECEIPTS_CACHE[path]
+
+def _cache_receipt(topic, receipt):
+    """Keep the cache honest after an append (populate-from-disk first, then append)."""
+    _receipts_for(topic).append(receipt)
+
+def _seen_sids(topic):
+    """Stash ids already applied for this topic — the idempotency guard (issue #3)."""
+    return {r.get("sid") for r in _receipts_for(topic) if isinstance(r.get("sid"), str)}
+
+def _first_receipt_ts(topic, node):
+    """Day 0 for a node: the ts of its earliest receipt. Receipts are append-only, so the
+    first matching line IS the earliest — no sort needed. Returns None on first exposure."""
+    for r in _receipts_for(topic):
+        if r.get("node") == node:
+            return r.get("ts")
+    return None
 
 def validate_item(item):
     """Raise (die) if an item can't be applied. Lets a batch fail before any write."""
@@ -708,6 +785,16 @@ def apply_item(item, kind):
     node = g["nodes"].get(item["node"])
     if node is None:
         die("unknown node %s in topic %s" % (item["node"], item["topic"]))
+    # Idempotency (issue #3): a settle that already landed must be a no-op, not a second
+    # application. `receipt --file` re-run after a crash between `receipt` and `stash clear`
+    # used to double-count reps, append an indistinguishable duplicate receipt, and skew
+    # stats/calibration/refit permanently. The stash id is the transaction id.
+    sid = item.get("sid")
+    if isinstance(sid, str) and sid and sid in _seen_sids(item["topic"]):
+        drop_stash(item["topic"], item["node"])   # already graded; drain the stash entry
+        return {"node": item["node"], "topic": item["topic"], "applied": False,
+                "idempotent": True, "sid": sid,
+                "note": "receipt already applied — no-op (idempotency guard, issue #3)"}
     rating = item["rating"]
     model = load_model()
     node.setdefault("fsrs", _fresh_fsrs())
@@ -732,12 +819,20 @@ def apply_item(item, kind):
     # is not evidence of the medium, and a wrong stamp is append-only forever.
     if valid_artifact(node):
         extra = {**extra, "artifact": True}
+    # Day 0 is the node's FIRST receipt. Stamping elapsed-days here is what makes the north
+    # star (retention at 7/30/90 days — docs/04 named it in Phase 0 and never built it) a
+    # one-pass query over the receipt log instead of a join against the graph. On first
+    # exposure there is no prior receipt, so this is 0 by construction.
+    enc_ts = _first_receipt_ts(item["topic"], item["node"])
+    extra = {**extra, "days_since_encode": (days_between(enc_ts, today().isoformat()) or 0)
+                                            if enc_ts else 0}
     receipt = make_receipt(item, {**extra, "due_next": node["fsrs"]["due"]}, kind)
     append_jsonl(p("receipts", item["topic"] + ".jsonl"), receipt)
+    _cache_receipt(item["topic"], receipt)   # a duplicate sid later in THIS batch must still be caught
     save_graph(g)
     drop_stash(item["topic"], item["node"])
     result = {"node": item["node"], "rating": rating, "state": node["state"],
-              "due": node["fsrs"]["due"], **extra}
+              "due": node["fsrs"]["due"], "applied": True, **extra}
     if item.get("grade") and GRADE_OF_RATING.get(rating) != item["grade"]:
         result["grade_rating_mismatch"] = "grade=%s but rating=%s" % (item["grade"], rating)
     return result
@@ -778,6 +873,10 @@ def cmd_stash(args):
                     die("stash item missing %s" % key)
             require_slug(item["topic"])
             item.setdefault("ts", today().isoformat())
+            # The stash id is the settle transaction id: it rides stash -> assessor ->
+            # receipt, and apply_item refuses one already on disk. This is what makes
+            # `receipt --file` idempotent and closes the crash-retry window (issue #3).
+            item.setdefault("sid", gen_id("s"))
             prod = item.get("production") or ""
             if len(prod) > PRODUCTION_MAX:   # bound stash growth (matches receipt cap)
                 item["production"] = prod[:PRODUCTION_MAX]
@@ -1154,6 +1253,206 @@ def compute_modality(receipts):
     out["caveat"] = MODALITY_CAVEAT
     return out
 
+# ------------------------------------------------- adherence & retention (v0.6)
+# The two numbers Engram never had. Everything here is a pure read over data the engine
+# has been writing since v0.1 and has never once looked at: no new state, no migration.
+#
+# Why they matter more than anything else in this file: the value a learning system
+# produces is Return x Encoding x Retention x Transfer, and those terms MULTIPLY. A
+# perfect encoder with zero return is worth exactly zero — which was the founder's own
+# account for six days (7 encoded, 0 reviewed) while the engine reported a cheerful
+# `[engram] 7 reviews due`. See docs/08 §The exhibit.
+
+def _by_node(receipts):
+    """(topic, node) -> {"first": earliest receipt, "reviews": [review receipts, ascending]}.
+
+    The FIRST receipt for a node is its encoding event: its `ts` is day 0, and its
+    `due_next` is the first review Engram ever booked for it."""
+    order = sorted(receipts, key=lambda r: (r.get("ts") or "", str(r.get("id") or "")))
+    out = {}
+    for r in order:
+        topic, node = r.get("topic"), r.get("node")
+        if not topic or not node:
+            continue
+        slot = out.setdefault((topic, node), {"first": r, "reviews": []})
+        if r.get("kind") == "review" and r.get("rating"):
+            slot["reviews"].append(r)
+    return out
+
+def compute_adherence():
+    """The funnel: encoded -> came due -> was actually reviewed.
+
+    `loop_closure` is THE binding-constraint metric. It answers the one question Engram
+    could never ask itself: *of the concepts I taught and scheduled, how many did the
+    learner ever come back for?* When it is 0, no other number on the dashboard is real,
+    and /coach is required to say so before reporting any of them."""
+    receipts = collect_receipts()
+    nodes = _by_node(receipts)
+    t = today()
+
+    reached = done = 0
+    for slot in nodes.values():
+        first_due = safe_date(slot["first"].get("due_next"))
+        if first_due is None or first_due > t:
+            continue                      # not yet due: the loop hasn't been asked to close
+        reached += 1
+        if slot["reviews"]:
+            done += 1
+    rate = round(done / reached, 3) if reached else None
+
+    sdates = sorted(d for d in (safe_date(s.get("ts"))
+                                for s in read_jsonl(p("sessions.jsonl"))) if d)
+    gaps = sorted((b - a).days for a, b in zip(sdates, sdates[1:]))
+    last = sdates[-1] if sdates else None
+
+    retained_30d = sum(
+        1 for slot in nodes.values()
+        if any((days_between(slot["first"].get("ts"), r.get("ts")) or 0) >= 25
+               and r.get("rating") != "again" for r in slot["reviews"]))
+
+    if not nodes:
+        read = "no concepts encoded yet"
+    elif reached == 0:
+        read = "nothing has come due yet — the loop has not been tested"
+    elif done == 0:
+        read = ("THE LOOP HAS NEVER CLOSED: %d concept%s came due and none %s reviewed"
+                % (reached, "s" if reached != 1 else "", "were" if reached != 1 else "was"))
+    elif rate < 0.5:
+        read = "the loop closes less than half the time — retention is mostly not happening"
+    else:
+        read = "the loop is closing"
+
+    return {
+        "loop_closure": {"encoded_past_due": reached, "first_review_done": done,
+                         "rate": rate, "read": read},
+        "return": {
+            "sessions_7d": sum(1 for d in sdates if 0 <= (t - d).days < 7),
+            "sessions_30d": sum(1 for d in sdates if 0 <= (t - d).days < 30),
+            "days_since_last_session": ((t - last).days if last else None),
+            "median_gap_days": (gaps[len(gaps) // 2] if gaps else None),
+            "reviews_due_now": len(due_items()),
+        },
+        "funnel": {
+            "topics_started": len(all_topics()),
+            "nodes_encoded": len(nodes),
+            "nodes_reaching_first_due": reached,
+            "nodes_first_reviewed": done,
+            "nodes_retained_30d": retained_30d,
+        },
+    }
+
+# Elapsed-day windows for the north star. They must PARTITION [0, inf) — every review lands
+# in exactly one bucket, and none is ever silently dropped.
+#
+# The first cut of this used disjoint windows (5-10 / 25-40 / 80-110) and a v0.6 live test
+# caught it immediately: a real review at day 11 fell in a *gap* and vanished, so `retention`
+# reported "no reviews yet" while a review sat on disk. Under real FSRS intervals (~4d, ~12d,
+# ~30d, ~70d) most reviews would have landed in those holes, and the north star would have
+# been computed on an arbitrary subset of the evidence — precisely the dishonesty this
+# release exists to kill. A metric that quietly discards data is worse than no metric.
+#
+# `early` is kept separate and NEVER pooled into a retention claim: a sub-4-day retrieval is
+# still encoding, not evidence that anything was retained.
+RETENTION_BUCKETS = (
+    ("early", 0, 3),          # sub-week: re-encoding, not retention. Reported, never pooled.
+    ("7d", 4, 14),            # about a week
+    ("30d", 15, 59),          # about a month   <- the headline
+    ("90d", 60, 179),         # about a quarter
+    ("180d+", 180, 10 ** 6),  # permastore territory
+)
+
+def compute_retention():
+    """THE NORTH STAR. docs/04 named it in Phase 0 ("7-day and 30-day retention on
+    scheduled reviews") and it was never implemented — `stats` has only ever bucketed by
+    memory *strength*, not elapsed *time*.
+
+    Every review is bucketed by ITS OWN days-since-encode, not just first reviews: under
+    FSRS the first review lands ~4 days out, so a first-reviews-only metric would leave
+    the 30d and 90d buckets containing nothing but *abandoned* nodes — the exact
+    population whose recall we most want to stop pretending we measured.
+
+    `unmeasured` is the honest denominator and is NOT optional. A retention figure computed
+    only over completed reviews silently drops precisely the concepts the learner walked
+    away from — which are, definitionally, the ones that decayed. That is survivorship bias
+    with a progress bar, and shipping it would make Engram a liar in the one place it
+    cannot afford to be."""
+    receipts = collect_receipts()
+    nodes = _by_node(receipts)
+    t = today()
+
+    buckets = {name: {"recalled": 0, "partial": 0, "lapsed": 0, "n": 0, "rate": None}
+               for name, _, _ in RETENTION_BUCKETS}
+    for slot in nodes.values():
+        enc = slot["first"].get("ts")
+        for r in slot["reviews"]:
+            el = days_between(enc, r.get("ts"))
+            if el is None:
+                continue
+            for name, lo, hi in RETENTION_BUCKETS:
+                if lo <= el <= hi:
+                    b = buckets[name]
+                    grade = r.get("grade")
+                    if grade not in GRADES:
+                        grade = GRADE_OF_RATING.get(r.get("rating"))
+                    if grade in GRADES:
+                        b[grade] += 1
+                    b["n"] += 1
+                    break
+    for b in buckets.values():
+        if b["n"]:
+            b["rate"] = round((b["recalled"] + b["partial"]) / b["n"], 3)
+
+    # Came due, never reviewed. Their recall is UNKNOWN — not absent — and FSRS can
+    # project it, which is the only honest thing that can be said about them.
+    stale, proj = 0, []
+    for tp, g in iter_graphs():
+        for nid, node in (g.get("nodes") or {}).items():
+            if not isinstance(node, dict):
+                continue
+            slot = nodes.get((tp, nid))
+            if slot is not None and slot["reviews"]:
+                continue                       # it was reviewed: it is measured, not stale
+            f = node.get("fsrs") or {}
+            s, due, last = (as_number(f.get("s")), safe_date(f.get("due")),
+                            safe_date(f.get("last")))
+            if s is None or due is None or due > t:
+                continue                       # never encoded, or not yet due
+            stale += 1
+            if last:
+                proj.append(retrievability(max(0, (t - last).days), s))
+
+    bucketed = sum(b["n"] for b in buckets.values())
+    total_reviews = sum(len(s["reviews"]) for s in nodes.values())
+    headline = buckets["30d"]
+    return {
+        "buckets": buckets,
+        "definition": ("of retrievals attempted N days after a concept was FIRST encoded, the "
+                       "fraction graded recalled-or-partial. Windows partition [0, inf): "
+                       "early 0-3 (re-encoding, never pooled) · 7d 4-14 · 30d 15-59 (headline) "
+                       "· 90d 60-179 · 180d+ 180+."),
+        # Every review must land in exactly one bucket. If this is ever < 1.0, the metric is
+        # silently discarding evidence and must not be trusted (a v0.6 live test caught
+        # exactly that, with disjoint windows that dropped a real day-11 review).
+        "coverage": {
+            "reviews_bucketed": bucketed, "reviews_total": total_reviews,
+            "complete": bucketed == total_reviews,
+        },
+        "unmeasured": {
+            "past_due_never_reviewed": stale,
+            "projected_recall_now": (round(sum(proj) / len(proj), 3) if proj else None),
+            "note": ("UNKNOWN, not absent. These came due and were never reviewed. Reporting "
+                     "retention without them is survivorship bias — they are exactly the "
+                     "concepts that decayed."),
+        },
+        "read": (("30-day recall %d%% (n=%d)" % (round(headline["rate"] * 100), headline["n"]))
+                 if headline["n"] else
+                 (("measured over %d retrieval%s — none yet at the 30-day mark"
+                   % (bucketed, "s" if bucketed != 1 else "")) if bucketed else
+                  ("insufficient-data (no reviews yet)" + (
+                      " — and %d concept%s past due, decaying unmeasured"
+                      % (stale, "s" if stale != 1 else "") if stale else "")))),
+    }
+
 def compute_stats():
     receipts = collect_receipts()
     reviews = [r for r in receipts if r.get("kind") == "review" and r.get("rating")]
@@ -1181,6 +1480,11 @@ def compute_stats():
                      default=None)
     return {
         "receipts": len(receipts), "reviews": len(reviews),
+        # The binding constraint and the north star lead the block on purpose: /coach is
+        # required to report loop_closure BEFORE any other number, because when the loop
+        # has never closed, nothing below it is real yet (docs/10 v0.6).
+        "adherence": compute_adherence(),
+        "retention": compute_retention(),
         "recall_by_stability": recall,
         "calibration": calibration,
         "calibration_encode": calibration_encode,
@@ -1197,6 +1501,116 @@ def compute_stats():
 
 def cmd_stats(_args):
     emit(compute_stats())
+
+def cmd_adherence(_args):
+    emit(compute_adherence())
+
+def cmd_retention(_args):
+    emit(compute_retention())
+
+DECAY_HORIZON_DEFAULT = 30
+
+def cmd_decay(args):
+    """What is dying right now, and what a review today would save — in real FSRS numbers.
+
+    The engine has always been able to compute this and has never once said it. On the
+    founder's own state (7 concepts encoded 2026-07-05, zero reviews) it says: 2.9 of 7
+    survive to day 30 untouched; 5.6 of 7 survive if the four-minute review happens today.
+    Four minutes is worth 2.7 concepts, and the ambient surface said `7 reviews due`.
+
+    THE RULE THAT KEEPS THIS HONEST (docs/05 P13, and it is not negotiable): this is
+    INFORMATION, NEVER PRESSURE. It reports a forgetting curve the way a lab notebook
+    reports a result — flatly, because the result is what it is. The skills surface it ONCE
+    on return, with amnesty and a two-minute path, never per-session, never as a should, and
+    `settings.decay_notice = "off"` silences it entirely. A line that reads to a skeptic as
+    "the tutor is trying to make me feel guilty" is a defect, not a feature."""
+    t = today()
+    horizon = clamp(int(args.horizon or DECAY_HORIZON_DEFAULT), 1, INTERVAL_MAX)
+    model = read_model()
+    retention = as_number(model["memory"].get("desired_retention"), RETENTION_DEFAULT)
+    im = as_number(model["memory"].get("interval_multiplier"), 1.0)
+
+    rows, due_n = [], 0
+    for tp, g in iter_graphs(args.topic):
+        for nid in (g.get("order") or []):
+            node = (g.get("nodes") or {}).get(nid)
+            if not isinstance(node, dict):
+                continue
+            f = node.get("fsrs") or {}
+            s, last = as_number(f.get("s")), safe_date(f.get("last"))
+            if s is None or last is None:
+                continue                       # never encoded: nothing to lose yet
+            elapsed = max(0, (t - last).days)
+            due_d = safe_date(f.get("due"))
+            is_due = bool(due_d and due_d <= t)
+            due_n += 1 if is_due else 0
+            # counterfactual: rate it `good` today, then look `horizon` days past that.
+            sim = dict(f, retention=retention, im=im)
+            after, _ = apply_rating(sim, "good", t)
+            rows.append({
+                "topic": tp, "node": nid, "due": is_due,
+                "s": round(s, 1),
+                "r_now": round(retrievability(elapsed, s), 3),
+                "r_no_review": round(retrievability(elapsed + horizon, s), 3),
+                "r_if_reviewed": round(retrievability(horizon, as_number(after["s"], s)), 3),
+                "s_if_reviewed": round(as_number(after["s"], s), 1),
+            })
+
+    n = len(rows)
+    mean = lambda k: (round(sum(r[k] for r in rows) / n, 3) if n else None)
+    alive = lambda k: (round(sum(r[k] for r in rows), 1) if n else 0.0)
+    out = {
+        "topic": args.topic, "horizon_days": horizon,
+        "encoded": n, "due_now": due_n,
+        "now": {"mean_recall": mean("r_now"), "expected_alive": alive("r_now")},
+        "at_horizon_no_review": {"mean_recall": mean("r_no_review"),
+                                 "expected_alive": alive("r_no_review")},
+        "at_horizon_if_reviewed_today": {"mean_recall": mean("r_if_reviewed"),
+                                         "expected_alive": alive("r_if_reviewed"),
+                                         "minutes": max(1, round(due_n * 0.6)) if due_n else 0},
+        "nodes": rows,
+        "notice": model["settings"].get("decay_notice", "on"),
+    }
+    if not n:
+        out["read"] = "nothing encoded yet — nothing to lose"
+    else:
+        saved = alive("r_if_reviewed") - alive("r_no_review")
+        out["saved_by_reviewing_today"] = round(saved, 1)
+        out["read"] = (
+            "%d concept%s encoded; %.1f expected to survive %d days untouched, %.1f if "
+            "reviewed today (%s minute%s) — a difference of %.1f"
+            % (n, "s" if n != 1 else "", alive("r_no_review"), horizon,
+               alive("r_if_reviewed"), out["at_horizon_if_reviewed_today"]["minutes"],
+               "s" if out["at_horizon_if_reviewed_today"]["minutes"] != 1 else "",
+               saved))
+    emit(out)
+
+def cmd_commit(args):
+    """The learner's implementation intention — an if-then plan, in their own words.
+
+    Gollwitzer & Sheeran (2006): 94 independent tests, N > 8,000, d = 0.65 on goal
+    attainment; does not shrink with sample size (robust to publication-bias correction) and
+    survived the post-2015 replication crisis. It is the highest-effect-size adherence move
+    available that costs nothing and steers no one.
+
+    Stored because they said it. Shown back at the moment it names. NEVER enforced — this is
+    not a reminder system, it is the learner's own sentence repeated to them (docs/07 §4)."""
+    m = load_model()
+    before = m["settings"].get("commitment")
+    if args.clear:
+        m["settings"]["commitment"] = None
+    elif args.cue or args.action:
+        if not (args.cue and args.action):
+            die('commit needs both --cue and --action '
+                '(e.g. --cue "when I open the terminal" --action "I clear one review")')
+        m["settings"]["commitment"] = {"cue": args.cue, "action": args.action,
+                                       "set": today().isoformat()}
+    if m["settings"].get("commitment") != before:
+        write_json(p("learner-model.json"), m)
+    c = m["settings"].get("commitment")
+    emit({"commitment": c,
+          "note": ("%s, %s." % (c["cue"], c["action"]) if isinstance(c, dict) and c.get("cue")
+                   else "no commitment set — /learn offers to book one at the close.")})
 
 STATE_DOTS = {"review": "●", "learning": "◐", "new": "·"}
 
@@ -1226,6 +1640,27 @@ def cmd_topic_status(args):
     lines.append("● retained (review)   ◐ learning   · untouched   † threshold   * memorize-only")
     print("\n".join(lines))
 
+def _mean_recall_now(due):
+    """Mean current retrievability across a due queue, from each item's own FSRS curve.
+
+    Elapsed days come from the item's `last` (its last successful retrieval), read straight
+    off the graph — never reconstructed. An earlier cut derived elapsed as
+    `interval_for(s, RETENTION_DEFAULT) + overdue_days`, which silently breaks for any learner
+    who changed `desired_retention` or carries an `interval_multiplier`, and breaks in the
+    direction of *overstating* the decay. This line's entire warrant is that it is honest;
+    it does not get to estimate what it can read.
+
+    Returns None when nothing in the queue carries usable state."""
+    rs = []
+    t = today()
+    for d in due:
+        s = as_number(d.get("s"))
+        last = safe_date(d.get("last"))
+        if s is None or s <= 0 or last is None:
+            continue
+        rs.append(retrievability(max(0, (t - last).days), s))
+    return (sum(rs) / len(rs)) if rs else None
+
 def cmd_session_start(_args):
     if not os.path.isdir(home()):
         return  # never installed/used: stay silent
@@ -1246,6 +1681,34 @@ def cmd_session_start(_args):
         minutes = max(1, round(len(due) * 0.6))
         print("[engram] %d review%s due (%s) · ~%d min · /review to clear, /learn to continue."
               % (len(due), "s" if len(due) != 1 else "", summary, minutes))
+        # The honest cost line (v0.6). Engram has always been able to compute what the
+        # decay costs and has never said it — its whole ambient surface on the sixth day
+        # of a memory dying on schedule was "7 reviews due" (docs/08 §The exhibit).
+        #
+        # It is a RETURN-EVENT line, not a per-session nag: it fires only when the loop
+        # has genuinely never closed, or after a real absence. Information, never pressure
+        # (docs/05 P13) — a forgetting curve reported the way a lab notebook reports a
+        # result. No "should", no scold. `settings.decay_notice = "off"` silences it.
+        try:
+            model = read_model()                      # read-only: the hook holds no lock
+            if model["settings"].get("decay_notice", "on") != "off":
+                ad = compute_adherence()
+                lc = ad["loop_closure"]
+                gone = ad["return"]["days_since_last_session"]
+                never_closed = lc["encoded_past_due"] > 0 and lc["first_review_done"] == 0
+                returning = gone is not None and gone >= 7
+                if never_closed or returning:
+                    mean_now = _mean_recall_now(due)
+                    if mean_now is not None and mean_now < 0.90:
+                        subject = ("that one sits" if len(due) == 1
+                                   else "those %d sit" % len(due))
+                        print("[engram] %s at ~%d%% recall and still falling · %d min now is "
+                              "the difference between keeping %s and re-learning %s."
+                              % (subject, round(mean_now * 100), minutes,
+                                 "it" if len(due) == 1 else "them",
+                                 "it" if len(due) == 1 else "them"))
+        except Exception:
+            pass                                       # ambient surface: never break a session
     if pending:
         print("[engram] %d production%s awaiting assessor grading — /learn or /review will finish verification."
               % (pending, "s" if pending != 1 else ""))
@@ -1309,7 +1772,7 @@ def cmd_doctor(_args):
     if not info["writable"]:
         issues.append("state dir is not writable")
     try:
-        load_model()
+        read_model()
         info["model_ok"] = True
     except SystemExit:
         info["model_ok"] = False
@@ -1425,7 +1888,7 @@ color:var(--muted);font-size:12px}
 
 def cmd_report(args):
     stats = compute_stats()
-    model = load_model()
+    model = read_model()
     d = today().isoformat()
     parts = ["<meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>",
              "<title>Engram — learning dashboard</title><style>%s</style><main>" % REPORT_CSS,
@@ -1844,6 +2307,367 @@ def cmd_selftest(_args):
                 and nx2["id"] is None and nx2["pending_verify"] == 2)
     check("next skips stashed node and provisionally clears stashed prereq",
           fresh(_stash_aware_next))
+
+    # ============ v0.6 — the loop closes: adherence, retention, decay, commit, sid ======
+
+    # -- days_between is the spine of every elapsed-day metric --
+    check("days_between computes elapsed days, tolerates garbage",
+          days_between("2026-07-05", "2026-08-04") == 30
+          and days_between(None, "2026-07-05") is None
+          and days_between("not-a-date", "2026-07-05") is None)
+
+    # -- ADHERENCE: the funnel must COUNT the abandoned node, never drop it --
+    # This is the whole point. A funnel that silently omits "came due, never reviewed"
+    # would report the founder's 0/7 as a clean sheet.
+    def _adherence_counts_the_abandoned(h):
+        _add_ab()
+        # encode both on day 0; `good` books a review a few days out
+        _capture(cmd_rate, _ns(topic="t", node="a", rating="good", grade="recalled",
+                               kind="encode", production="x"))
+        _capture(cmd_rate, _ns(topic="t", node="b", rating="good", grade="recalled",
+                               kind="encode", production="x"))
+        os.environ["ENGRAM_TODAY"] = "2026-08-06"      # both now long past due
+        ad = _capture_json(cmd_adherence, _ns())
+        lc = ad["loop_closure"]
+        # nothing reviewed: 2 came due, 0 done, rate 0.0 — and it must SAY so
+        never = (lc["encoded_past_due"] == 2 and lc["first_review_done"] == 0
+                 and lc["rate"] == 0.0 and "NEVER CLOSED" in lc["read"])
+        # now review one of them; the funnel must move to 1/2
+        _capture(cmd_rate, _ns(topic="t", node="a", rating="good", grade="recalled",
+                               kind="review", production="x"))
+        lc2 = _capture_json(cmd_adherence, _ns())["loop_closure"]
+        moved = (lc2["encoded_past_due"] == 2 and lc2["first_review_done"] == 1
+                 and lc2["rate"] == 0.5)
+        os.environ["ENGRAM_TODAY"] = "2026-07-06"
+        return never and moved
+    check("adherence: loop_closure counts came-due-and-abandoned (0/2 -> 1/2)",
+          fresh(_adherence_counts_the_abandoned))
+
+    # -- a node encoded but NOT yet due must not be counted as a missed close --
+    def _adherence_ignores_not_yet_due(h):
+        _add_ab()
+        _capture(cmd_rate, _ns(topic="t", node="a", rating="easy", grade="recalled",
+                               kind="encode", production="x"))   # easy -> far-out due date
+        lc = _capture_json(cmd_adherence, _ns())["loop_closure"]
+        return lc["encoded_past_due"] == 0 and lc["rate"] is None and "not been tested" in lc["read"]
+    check("adherence: a not-yet-due node is not a missed close",
+          fresh(_adherence_ignores_not_yet_due))
+
+    # -- RETENTION: the north star, bucketed by elapsed days since ENCODE --
+    def _retention_buckets(h):
+        _add_ab()
+        _capture(cmd_rate, _ns(topic="t", node="a", rating="good", grade="recalled",
+                               kind="encode", production="x"))       # day 0 = 2026-07-06
+        os.environ["ENGRAM_TODAY"] = "2026-07-13"                    # +7d -> "7d" bucket
+        _capture(cmd_rate, _ns(topic="t", node="a", rating="good", grade="recalled",
+                               kind="review", production="x"))
+        os.environ["ENGRAM_TODAY"] = "2026-08-05"                    # +30d -> "30d" bucket
+        _capture(cmd_rate, _ns(topic="t", node="a", rating="again", grade="lapsed",
+                               kind="review", production="x"))
+        r = _capture_json(cmd_retention, _ns())
+        os.environ["ENGRAM_TODAY"] = "2026-07-06"
+        b7, b30 = r["buckets"]["7d"], r["buckets"]["30d"]
+        return (b7["n"] == 1 and b7["recalled"] == 1 and b7["rate"] == 1.0
+                and b30["n"] == 1 and b30["lapsed"] == 1 and b30["rate"] == 0.0
+                and "30-day recall 0%" in r["read"])
+    check("retention: reviews bucket by days-since-encode (7d recalled, 30d lapsed)",
+          fresh(_retention_buckets))
+
+    # -- THE BUCKETS MUST PARTITION [0, inf): no review is EVER silently dropped --
+    # The first cut of this used disjoint windows (5-10/25-40/80-110) and a live test caught a
+    # real day-11 review vanishing into a gap — `retention` reported "no reviews yet" with a
+    # review sitting on disk. A metric that quietly discards evidence is worse than no metric.
+    # This check sweeps every elapsed day across the whole range and demands full coverage.
+    def _retention_partitions(h):
+        _add_ab()
+        _capture(cmd_rate, _ns(topic="t", node="a", rating="good", grade="recalled",
+                               kind="encode", production="x"))       # day 0
+        base = date(2026, 7, 6)
+        days = [0, 1, 3, 4, 5, 9, 11, 14, 15, 20, 30, 45, 59, 60, 75, 100, 179, 180, 400]
+        for d in days:                                   # every one must land somewhere
+            os.environ["ENGRAM_TODAY"] = (base + timedelta(days=d)).isoformat()
+            _capture(cmd_rate, _ns(topic="t", node="a", rating="good", grade="recalled",
+                                   kind="review", production="x"))
+        r = _capture_json(cmd_retention, _ns())
+        os.environ["ENGRAM_TODAY"] = "2026-07-06"
+        cov = r["coverage"]
+        return (cov["reviews_total"] == len(days)
+                and cov["reviews_bucketed"] == len(days)     # ← the day-11 bug would fail here
+                and cov["complete"] is True)
+    check("retention buckets partition [0,inf): every review lands in exactly one (none dropped)",
+          fresh(_retention_partitions))
+
+    # -- `early` (0-3d) is reported but NEVER pooled into a retention claim --
+    def _early_not_pooled(h):
+        _add_ab()
+        _capture(cmd_rate, _ns(topic="t", node="a", rating="good", grade="recalled",
+                               kind="encode", production="x"))
+        os.environ["ENGRAM_TODAY"] = "2026-07-08"            # +2d: still encoding, not retention
+        _capture(cmd_rate, _ns(topic="t", node="a", rating="good", grade="recalled",
+                               kind="review", production="x"))
+        r = _capture_json(cmd_retention, _ns())
+        os.environ["ENGRAM_TODAY"] = "2026-07-06"
+        return (r["buckets"]["early"]["n"] == 1 and r["buckets"]["30d"]["n"] == 0
+                and "none yet at the 30-day mark" in r["read"])
+    check("retention: a sub-4-day retrieval counts as `early`, never as retention",
+          fresh(_early_not_pooled))
+
+    # -- RETENTION: the honest denominator. THE anti-survivorship-bias guard. --
+    # A retention figure computed only over completed reviews drops exactly the concepts
+    # the learner abandoned. This check exists so that can never silently ship.
+    def _retention_unmeasured(h):
+        _add_ab()
+        _capture(cmd_rate, _ns(topic="t", node="a", rating="good", grade="recalled",
+                               kind="encode", production="x"))
+        os.environ["ENGRAM_TODAY"] = "2026-08-06"       # came due, never reviewed
+        r = _capture_json(cmd_retention, _ns())
+        os.environ["ENGRAM_TODAY"] = "2026-07-06"
+        u = r["unmeasured"]
+        return (u["past_due_never_reviewed"] == 1
+                and 0.0 < u["projected_recall_now"] < 1.0     # real FSRS projection
+                and "survivorship" in u["note"]
+                and "decaying unmeasured" in r["read"])
+    check("retention: unmeasured block counts past-due-never-reviewed (no survivorship bias)",
+          fresh(_retention_unmeasured))
+
+    # -- a reviewed node leaves the unmeasured pool (it is measured, not stale) --
+    def _retention_unmeasured_clears(h):
+        _add_ab()
+        _capture(cmd_rate, _ns(topic="t", node="a", rating="good", grade="recalled",
+                               kind="encode", production="x"))
+        os.environ["ENGRAM_TODAY"] = "2026-08-06"
+        _capture(cmd_rate, _ns(topic="t", node="a", rating="good", grade="recalled",
+                               kind="review", production="x"))
+        r = _capture_json(cmd_retention, _ns())
+        os.environ["ENGRAM_TODAY"] = "2026-07-06"
+        return r["unmeasured"]["past_due_never_reviewed"] == 0
+    check("retention: a reviewed node leaves the unmeasured pool",
+          fresh(_retention_unmeasured_clears))
+
+    # -- DECAY: reviewing today must beat not reviewing, in real FSRS numbers --
+    # Time must pass first. A same-day review buys NOTHING (next check pins this): with
+    # elapsed=0, retrievability is 1.0, so FSRS's prediction-error term exp(w*(1-r))-1
+    # collapses to zero and stability does not grow. That is not a bug — it is the spacing
+    # effect, in the arithmetic. The decay pitch is only ever honest once a memory has aged.
+    def _decay(h):
+        _add_ab()
+        _capture(cmd_rate, _ns(topic="t", node="a", rating="good", grade="recalled",
+                               kind="encode", production="x"))     # day 0, s ~ 3.71
+        os.environ["ENGRAM_TODAY"] = "2026-07-12"                  # six days later, like the founder
+        d = _capture_json(cmd_decay, _ns(topic="t", horizon=30))
+        os.environ["ENGRAM_TODAY"] = "2026-07-06"
+        no, yes = d["at_horizon_no_review"], d["at_horizon_if_reviewed_today"]
+        return (d["encoded"] == 1
+                and yes["expected_alive"] > no["expected_alive"]   # the whole point
+                and d["saved_by_reviewing_today"] > 0
+                and 0.0 < no["mean_recall"] < 1.0
+                and d["nodes"][0]["s_if_reviewed"] > d["nodes"][0]["s"])
+    check("decay: reviewing an aged memory today beats not reviewing (FSRS, not rhetoric)",
+          fresh(_decay))
+
+    # -- the spacing effect, asserted: a same-day review adds no stability --
+    # (Pins the reason `decay` is honest only after time passes, and guards against anyone
+    # "fixing" the zero-gain case by inventing growth FSRS does not license.)
+    check("same-day review buys no stability (r=1 -> no prediction error -> no growth)",
+          approx(next_stability_recall(5.0, 10.0, 1.0, 3), 10.0, 0.001))
+
+    # -- decay is silent about nodes that were never encoded (nothing to lose) --
+    def _decay_empty(h):
+        _add_ab()
+        d = _capture_json(cmd_decay, _ns(topic="t", horizon=30))
+        return d["encoded"] == 0 and "nothing to lose" in d["read"]
+    check("decay: an unencoded topic has nothing to lose", fresh(_decay_empty))
+
+    # -- COMMIT: the implementation intention round-trips, and is off-switchable --
+    def _commit(h):
+        c = _capture_json(cmd_commit, _ns(cue="when I open the terminal",
+                                          action="I clear one review", clear=False))
+        stored = read_json(os.path.join(h, "learner-model.json"))["settings"]["commitment"]
+        got = (c["commitment"]["cue"] == "when I open the terminal"
+               and stored["action"] == "I clear one review" and stored["set"])
+        cleared = _capture_json(cmd_commit, _ns(cue=None, action=None, clear=True))
+        return got and cleared["commitment"] is None and "no commitment" in cleared["note"]
+    check("commit: if-then plan round-trips and clears", fresh(_commit))
+    check("commit: half a plan is refused (cue without action)",
+          fresh(lambda h: raises(cmd_commit, _ns(cue="when X", action=None, clear=False))))
+
+    # -- the ambient decay line: fires on a never-closed loop, and OFF means off --
+    # It is a return-event line, not a per-session nag (docs/05 P13: information, never
+    # pressure). This check is the guard against it ever becoming one.
+    def _decay_line(h):
+        _add_ab()
+        _capture(cmd_rate, _ns(topic="t", node="a", rating="good", grade="recalled",
+                               kind="encode", production="x"))
+        os.environ["ENGRAM_TODAY"] = "2026-08-06"           # long overdue, never reviewed
+        on = _capture(cmd_session_start, _ns())
+        _capture(cmd_model, _ns(set=["settings.decay_notice=off"],
+                                add_interest=None, add_goal=None))
+        off = _capture(cmd_session_start, _ns())
+        os.environ["ENGRAM_TODAY"] = "2026-07-06"
+        return ("still falling" in on and "review due" in on            # informs
+                and "still falling" not in off and "review due" in off  # …and off means off
+                and "should" not in on.lower())                         # never a should-statement
+    check("ambient decay line fires on a never-closed loop, and decay_notice=off silences it",
+          fresh(_decay_line))
+
+    # -- the decay line's recall figure is EXACT, not reconstructed --
+    # It must read each item's `last` off the graph. Deriving elapsed from
+    # `interval_for(s, RETENTION_DEFAULT) + overdue` breaks for any learner who moved
+    # `desired_retention` (measured: 3.3pp of OVERSTATED decay at 0.97) — and an honesty
+    # feature does not get to err in the direction of alarming the learner.
+    def _recall_now_is_exact(h):
+        _add_ab()
+        _capture(cmd_model, _ns(set=["memory.desired_retention=0.97"],
+                                add_interest=None, add_goal=None))
+        _capture(cmd_rate, _ns(topic="t", node="a", rating="good", grade="recalled",
+                               kind="encode", production="x"))            # last = 2026-07-06
+        os.environ["ENGRAM_TODAY"] = "2026-07-20"                         # 14 days elapsed
+        due = due_items()
+        exact = _mean_recall_now(due)
+        s = as_number(due[0]["s"])
+        truth = retrievability(14, s)                                     # hand-computed
+        os.environ["ENGRAM_TODAY"] = "2026-07-06"
+        return due[0].get("last") == "2026-07-06" and approx(exact, truth, 0.001)
+    check("decay line reads `last` for exact elapsed (never reconstructs the interval)",
+          fresh(_recall_now_is_exact))
+
+    # -- and it stays SILENT on a healthy loop (the anti-nag guard) --
+    def _no_nag_when_healthy(h):
+        _add_ab()
+        _capture(cmd_rate, _ns(topic="t", node="a", rating="good", grade="recalled",
+                               kind="encode", production="x"))
+        os.environ["ENGRAM_TODAY"] = "2026-07-18"
+        _capture(cmd_rate, _ns(topic="t", node="a", rating="good", grade="recalled",
+                               kind="review", production="x"))   # loop closed
+        _capture(cmd_log_session, _ns(kind="review", mode="quick", minutes=2, items=1, notes=None))
+        out = _capture(cmd_session_start, _ns())
+        os.environ["ENGRAM_TODAY"] = "2026-07-06"
+        return "still falling" not in out        # loop is closing + no absence -> no line
+    check("ambient decay line stays silent on a healthy loop (anti-nag)",
+          fresh(_no_nag_when_healthy))
+
+    # -- settings self-heal: a v0.5 model gains the v0.6 keys without breaking --
+    healed6 = _deep_heal({"schema": SCHEMA, "settings": {"momentum": "off"}}, DEFAULT_MODEL)
+    check("v0.5 model self-heals to v0.6 settings (commitment/decay_notice)",
+          healed6["settings"]["commitment"] is None
+          and healed6["settings"]["decay_notice"] == "on"
+          and healed6["settings"]["momentum"] == "off")     # and does not clobber the old one
+
+    # -- READ-ONLY COMMANDS MUST NOT WRITE (lock-discipline race, found in v0.6 live test) --
+    # `decay`/`doctor`/`report` take no lock because they are reads. But load_model()
+    # *persists* its self-heal, so an unlocked read could flush a stale snapshot over a
+    # concurrent locked mutator's write — silently reverting a refit or a commitment. This
+    # was latent in report/doctor since v0.5. read_model() heals in memory and never writes.
+    def _reads_never_write(h):
+        stale = {"schema": SCHEMA, "settings": {"default_mode": "sprint"}}   # needs healing
+        mpath = os.path.join(h, "learner-model.json")
+        write_json(mpath, stale)
+        _add_ab()
+        _capture(cmd_rate, _ns(topic="t", node="a", rating="good", grade="recalled",
+                               kind="encode", production="x"))
+        write_json(mpath, stale)                    # reset: rate() legitimately heals it
+        before = open(mpath, encoding="utf-8").read()
+        for fn, ns in ((cmd_decay, _ns(topic=None, horizon=30)),
+                       (cmd_doctor, _ns()),
+                       (cmd_report, _ns(out=None, allow_outside=False))):
+            _capture(fn, ns)
+        unchanged = open(mpath, encoding="utf-8").read() == before
+        # …and a *mutating* command (which holds the lock) still does heal it
+        _capture(cmd_model, _ns(set=None, add_interest=None, add_goal=None))
+        healed = read_json(mpath)["settings"].get("decay_notice") == "on"
+        return unchanged and healed
+    check("read-only commands never persist a heal (decay/doctor/report take no lock)",
+          fresh(_reads_never_write))
+
+    # -- IDEMPOTENCY (issue #3): the same settle file applied twice is a no-op --
+    def _receipt_idempotent(h):
+        _add_ab()
+        item = {"topic": "t", "node": "a", "probe": "pa", "production": "ans"}
+        _capture(cmd_stash, _ns(action="add", json=json.dumps(item)))
+        stashed = _capture_json(cmd_stash, _ns(action="list"))[0]
+        sid = stashed.get("sid")
+        graded = [{"topic": "t", "node": "a", "rating": "good", "grade": "recalled",
+                   "kind": "review", "sid": sid, "production": "ans"}]
+        write_json(os.path.join(h, "graded.json"), graded)
+        first = _capture_json(cmd_receipt, _ns(file=os.path.join(h, "graded.json")))
+        second = _capture_json(cmd_receipt, _ns(file=os.path.join(h, "graded.json")))
+        reps = load_graph("t")["nodes"]["a"]["fsrs"]["reps"]
+        on_disk = len([r for r in read_jsonl(os.path.join(h, "receipts", "t.jsonl"))
+                       if r.get("sid") == sid])
+        return (bool(sid) and first[0]["applied"] is True
+                and second[0]["applied"] is False and second[0]["idempotent"] is True
+                and reps == 1 and on_disk == 1)
+    check("receipt --file is idempotent: re-applying the same sid is a no-op (issue #3)",
+          fresh(_receipt_idempotent))
+
+    # -- the SAME sid twice inside ONE batch: the second must be a no-op --
+    # The receipt-log cache exists for speed; this check is what keeps it honest. It must be
+    # kept in sync on append, or a duplicate later in the same batch would slip through
+    # against a stale snapshot — reintroducing exactly the bug the sid was added to kill.
+    def _dup_sid_one_batch(h):
+        _add_ab()
+        dup = [{"topic": "t", "node": "a", "rating": "good", "grade": "recalled",
+                "kind": "review", "sid": "DUP", "production": "x"}] * 2
+        write_json(os.path.join(h, "dup.json"), dup)
+        res = _capture_json(cmd_receipt, _ns(file=os.path.join(h, "dup.json")))
+        on_disk = len([r for r in read_jsonl(os.path.join(h, "receipts", "t.jsonl"))
+                       if r.get("sid") == "DUP"])
+        return (res[0]["applied"] is True and res[1]["applied"] is False
+                and load_graph("t")["nodes"]["a"]["fsrs"]["reps"] == 1 and on_disk == 1)
+    check("the same sid twice in ONE batch: second is a no-op (cache stays in sync)",
+          fresh(_dup_sid_one_batch))
+
+    # -- the receipt cache is keyed by PATH, so it cannot leak across ENGRAM_HOMEs --
+    def _cache_home_isolated(_h):
+        with tempfile.TemporaryDirectory() as h1, tempfile.TemporaryDirectory() as h2:
+            for h in (h1, h2):
+                os.environ["ENGRAM_HOME"] = h
+                _capture(cmd_init, _ns())
+                _add_ab()
+            os.environ["ENGRAM_HOME"] = h1
+            _capture(cmd_rate, _ns(topic="t", node="a", rating="good", grade="recalled",
+                                   kind="encode", production="x"))
+            seen1 = len(_receipts_for("t"))
+            os.environ["ENGRAM_HOME"] = h2                 # different home, same topic name
+            seen2 = len(_receipts_for("t"))
+            return seen1 == 1 and seen2 == 0               # h2 must NOT see h1's receipt
+    check("receipt cache is path-keyed: a topic in one ENGRAM_HOME cannot read another's",
+          fresh(_cache_home_isolated))
+
+    # -- a receipt WITHOUT a sid still applies (back-compat with hand-rolled `rate`) --
+    def _no_sid_still_applies(h):
+        _add_ab()
+        batch = [{"topic": "t", "node": "a", "rating": "good", "kind": "encode"}]
+        write_json(os.path.join(h, "b.json"), batch)
+        _capture(cmd_receipt, _ns(file=os.path.join(h, "b.json")))
+        _capture(cmd_receipt, _ns(file=os.path.join(h, "b.json")))
+        return load_graph("t")["nodes"]["a"]["fsrs"]["reps"] == 2   # unchanged old behavior
+    check("sid is additive: a receipt without one applies as before (back-compat)",
+          fresh(_no_sid_still_applies))
+
+    # -- days_since_encode is stamped, and day 0 is the first receipt --
+    def _dse(h):
+        _add_ab()
+        _capture(cmd_rate, _ns(topic="t", node="a", rating="good", grade="recalled",
+                               kind="encode", production="x"))
+        os.environ["ENGRAM_TODAY"] = "2026-07-27"                   # +21d
+        _capture(cmd_rate, _ns(topic="t", node="a", rating="good", grade="recalled",
+                               kind="review", production="x"))
+        rs = read_jsonl(os.path.join(h, "receipts", "t.jsonl"))
+        os.environ["ENGRAM_TODAY"] = "2026-07-06"
+        return rs[0]["days_since_encode"] == 0 and rs[1]["days_since_encode"] == 21
+    check("receipts stamp days_since_encode (0 at encode, elapsed at review)", fresh(_dse))
+
+    # -- stats surfaces both new blocks, and leads with the binding constraint --
+    def _stats_embeds(h):
+        _add_ab()
+        s = _capture_json(cmd_stats, _ns())
+        keys = list(s.keys())
+        return ("adherence" in s and "retention" in s
+                and keys.index("adherence") < keys.index("recall_by_stability")
+                and "loop_closure" in s["adherence"] and "unmeasured" in s["retention"])
+    check("stats embeds adherence + retention, ahead of the older blocks",
+          fresh(_stats_embeds))
 
     # -- applying a receipt self-drains the stash (F3 adjacent) --
     def _stash_self_clean(h):
@@ -2271,8 +3095,17 @@ def main():
     ap = argparse.ArgumentParser(prog="engram", description=__doc__)
     sub = ap.add_subparsers(dest="cmd", required=True)
 
-    for name in ("init", "path", "session-start", "topics", "selftest", "stats", "doctor"):
+    for name in ("init", "path", "session-start", "topics", "selftest", "stats", "doctor",
+                 "adherence", "retention"):
         sub.add_parser(name)
+
+    sp = sub.add_parser("decay")
+    sp.add_argument("--topic")
+    sp.add_argument("--horizon", type=int, default=DECAY_HORIZON_DEFAULT)
+
+    sp = sub.add_parser("commit")
+    sp.add_argument("--cue"); sp.add_argument("--action")
+    sp.add_argument("--clear", action="store_true")
 
     sp = sub.add_parser("add-topic")
     sp.add_argument("--json"); sp.add_argument("--file"); sp.add_argument("--replace", action="store_true")
@@ -2348,15 +3181,19 @@ def main():
         "log-session": cmd_log_session, "stats": cmd_stats,
         "refit": cmd_refit, "doctor": cmd_doctor, "report": cmd_report,
         "selftest": cmd_selftest,
+        "adherence": cmd_adherence, "retention": cmd_retention,
+        "decay": cmd_decay, "commit": cmd_commit,
     }
     # Serialize state mutators: the skills run engine processes concurrently by
     # design (background artifact-smith registering while the tutor rates), and
     # whole-file read-modify-write without a lock is last-writer-wins data loss.
     # `artifact list` is a read, but sub-action dispatch isn't worth the special
     # case — the lock is milliseconds. Read-only commands stay lock-free.
+    # `adherence`/`retention`/`decay` are pure reads over receipts+graphs — no lock.
+    # `commit` writes the learner model, so it serializes like every other mutator.
     mutating = {"init", "add-topic", "rate", "receipt", "stash", "model", "focus",
                 "visuals", "artifact", "misconception", "experiment",
-                "log-session", "refit"}
+                "log-session", "refit", "commit"}
     if args.cmd in mutating:
         acquire_lock()
         try:

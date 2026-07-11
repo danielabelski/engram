@@ -29,6 +29,21 @@ If stash > 0, settle it first (assessor → `receipt` → `stash clear`, per /le
 - Offer (arrow-key): **clear a capped set today** (this mode's cap, most-overdue first — recommended) / **a longer catch-up** / **just the highest-value topic**. Never a marathon; the two-minute floor is a floor, not a target.
 - Then run only the chosen cap. What's left stays due and un-guilted. Zero shame in either the offer or the close.
 
+**The honest number, exactly once (v0.6).** Amnesty removes the guilt; it must not also remove the *stakes*. After the amnesty line and **before** the arrow-key offer, read the engine and state what the decay actually costs — one line, then move on:
+
+```bash
+python3 "$ENGRAM" decay --topic <t>     # or bare, for everything
+```
+
+Its `read` field is already written for a human. Say it flatly, in the register of a lab notebook reporting a result: *"Those seven are at ~70% and still falling — four minutes today is the difference between keeping them and re-learning them."*
+
+The rules that keep this from becoming the thing this project despises:
+- **Information, never pressure** (`docs/05` P13; Deci/Koestner/Ryan 1999: controlling praise nets **d = −0.78** on adult motivation). It reports a forgetting curve because that is what the curve says. **No "should." No scold. No "don't lose your progress!"**
+- **Once, on return.** Not every session, not per item. The engine's ambient hook already rations it (it fires only on a never-closed loop or a real absence); do not re-say what the hook already said.
+- **Amnesty first, always.** The order is: *nothing is owed* → *here is what it costs* → *here is a two-minute path*. Reversed, it is a debt collector.
+- **`settings.decay_notice = "off"` means silent.** The learner opted out; honor it without comment.
+- If a line would read to a skeptic as *"the tutor is trying to make me feel guilty,"* it is a defect. Cut it.
+
 ## 2 · Per item — the retrieval protocol
 
 The `due` payload gives you `probe`, `claim` (canonical answer), and `rubric`. Show a progress marker per item: `[3/6] · residual-stream †`. The order of operations is sacred:

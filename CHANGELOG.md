@@ -1,5 +1,121 @@
 # Changelog
 
+## 0.6.0 — 2026-07-11 · the loop closes
+
+Engram has been an excellent **encoding** machine bolted to a **retention** machine that
+never ran. This release is about the second half.
+
+The finding that forced it, found by reading the author's own state: on 2026-07-05 he ran a
+45-minute `/learn` on transformer internals. The architect built a 13-node DAG, the tutor ran
+generation-first dialogue, the smith built an explorable, the blind assessor graded six
+productions and honestly rounded most down to `partial`. Seven concepts encoded, seven review
+dates booked. **Then nobody came back.** Six days later: zero reviews, zero streak, seven items
+overdue, one session in the log — ever. Meanwhile 501 people starred the repo.
+
+Run Engram's own FSRS curve over Engram's own state and it says: those seven decay to **2.7 of 7
+over the next 30 days untouched, or hold at 5.6 of 7 if the four-minute review happens** — a
+difference of 2.9 concepts. The engine could always compute both numbers. Its entire ambient
+surface, on the sixth day of a memory dying on schedule, was `[engram] 7 reviews due`.
+
+This is not a story about a lazy user. It is the product's own failure mode executing perfectly
+on the person most invested in it, which makes it architectural rather than personal.
+
+Three gaps, each confirmed by reading the code rather than the docs:
+
+- **The north star was never implemented.** `docs/04` named "7-day and 30-day retention on
+  scheduled reviews" the north star in Phase 0. `grep` found no such metric. `stats` bucketed by
+  memory *strength*, never elapsed *time*. **Naming a metric is not measuring it.**
+- **Adherence was invisible.** No signal anywhere for *"was this encoded concept ever reviewed?"*
+  The system could not see its own binding constraint.
+- **`receipt --file` was not idempotent** (issue #3) — a crash-retry between `receipt` and
+  `stash clear` double-counted reps permanently.
+
+### Engine (selftest 86 → 110)
+
+- **`adherence`** — the funnel Engram never looked at: `loop_closure` (encoded → came due →
+  actually reviewed), `return` (session cadence, days since last), `funnel` (topic → encoded →
+  due → reviewed → retained@30d). Pure read over data already on disk; no schema change.
+  **`loop_closure` is the binding-constraint number: the value a learning system produces is
+  Return × Encoding × Retention × Transfer, and those terms multiply — a perfect encoder with
+  zero return is worth exactly zero.**
+- **`retention`** — the north star, finally computed. Recall bucketed by each review's own
+  days-since-first-encode, in windows that **partition [0, ∞)** so no review is ever dropped:
+  `early` 0–3 (still re-encoding — reported, *never* pooled into a retention claim) · `7d` 4–14 ·
+  **`30d` 15–59 (the headline)** · `90d` 60–179 · `180d+`. Ships two honesty guards:
+  - **`unmeasured`** — the concepts that came due and were *never reviewed*. Their recall is
+    **unknown, not absent**, and FSRS projects it. A retention figure computed only over
+    *completed* reviews silently drops exactly the concepts the learner abandoned — survivorship
+    bias with a progress bar. The engine refuses to report one without the other.
+  - **`coverage`** — `reviews_bucketed / reviews_total`, which must be 1.0. This exists because
+    the *first* cut of this feature used disjoint windows (5–10 / 25–40 / 80–110) and **the live
+    test caught a real day-11 review falling into a gap and vanishing** — `retention` cheerfully
+    reported "no reviews yet" with a review sitting on disk. Under real FSRS intervals (~4d, ~12d,
+    ~30d, ~70d) most reviews would have landed in those holes and the north star would have been
+    computed on an arbitrary subset of the evidence. A metric that quietly discards data is worse
+    than no metric. Now selftested by sweeping 19 elapsed-day values across the full range.
+- **`decay`** — what is dying and what N minutes would save, in real FSRS numbers. Both arms
+  measured over the *same future window*, so it is a comparison rather than a rhetorical device.
+  The `due` payload now carries `last`, so current recall is computed from the learner's **actual**
+  last retrieval rather than reconstructed from `interval_for(s, 0.90) + overdue` — a
+  reconstruction that silently breaks for anyone who moved `desired_retention` (measured: **3.3
+  percentage points of *overstated* decay** at 0.97) and breaks in the one direction an honesty
+  feature is not permitted to err in: alarming the learner.
+- **`commit`** — the learner's implementation intention, in their own words (Gollwitzer & Sheeran
+  2006: 94 tests, N > 8,000, **d = 0.65**, robust to publication-bias correction). Stored because
+  they said it, shown back at the moment it names, **never enforced**.
+- **`sid` — receipts are idempotent** (closes #3). The stash id rides stash → assessor → receipt;
+  `apply_item` refuses one already on disk. Additive: a receipt without a `sid` applies exactly as
+  in v0.5.
+- **`days_since_encode`** stamped on every receipt — makes the north star a one-pass query.
+- **Fixed a latent race, present since v0.5:** `report` and `doctor` called `load_model()`, which
+  *persists* a self-heal — while holding no lock. An unlocked read could flush a stale snapshot
+  over a concurrent locked mutator, silently reverting a `refit`. New `read_model()` heals in
+  memory and never writes. Covered by a selftest that fails without it.
+- **Receipt log is cached per process, keyed by absolute path.** A batch settle re-read the whole
+  topic log once *per item* — measured at 1.85s for a 60-item settle against a 10k-line log, now
+  0.19s. The cache is keyed by path (never by topic alone, or a second `ENGRAM_HOME` would read
+  the first one's receipts) and kept in sync on append, so a duplicate `sid` appearing later in
+  the *same* batch is still caught. Both properties have selftests.
+
+### Behavior
+
+- **The ambient hook now says what the decay costs** — but only as a *return event*: it fires on a
+  never-closed loop or after a real absence, never per-session. *"Those 7 sit at ~70% recall and
+  still falling · 4 min now is the difference between keeping them and re-learning them."*
+  **Information, never pressure** (`docs/05` P13). No should, no scold, and
+  `settings.decay_notice = "off"` silences it entirely.
+- **`/review`** states the honest number once on return — *after* amnesty, *before* the capped
+  offer. The order is: nothing is owed → here is what it costs → here is a two-minute path.
+  Reversed, it is a debt collector.
+- **`/learn` books the return** — one plain question at the close, their words, stored via
+  `commit`, never enforced, never asked twice.
+- **`/coach` reports `loop_closure` FIRST.** When it is zero it says so plainly and stops: there
+  is no point narrating calibration over a loop that has never run.
+
+### Docs
+
+- **`docs/07-the-measured-loop.md`** — the frontier audit. Learning rate is close to a category
+  error (Koedinger 2023 *PNAS*, replicated EDM 2024: intercept variance dwarfs slope variance —
+  you cannot make people climb faster, only give them more climbs; the 2026 re-analysis contesting
+  the *magnitude* is recorded too). LLM-as-judge is **"reliability without validity"** (κ ≈
+  0.38–0.51 vs humans; raw agreement overstates chance-corrected κ by 34–41 points; **high
+  self-consistency + high bias is the documented failure mode** — precisely what a skeptic-prompted
+  assessor selects for). Pan & Rickard 2018: retrieval transfers at d = 0.40, but **d = 0.28 when
+  the response format differs vs d = 0.58 when it matches** — a quantified critique of verbal-only
+  review for doing-goals. The n-of-1 machinery is **underpowered ~2.5×**.
+- **`docs/08-vision.md`** — the objective function, which metrics are traps (confidence and joy
+  both are), and the final state: Tutor → Instrument → Commons. Adds **Article 11: the system's
+  success is measured by what the learner can do without it.**
+- **`docs/09-target-architecture.md`** · **`docs/10-roadmap-to-1.0.md`** — schemas, invariants, and
+  v0.6 → v1.0 as executable work orders.
+- `docs/04` marked complete and superseded.
+
+### Migration
+
+None. Every field is additive and self-heals: a v0.5 (or v0.3) learner model gains
+`commitment: null` and `decay_notice: "on"` on next load and behaves exactly as before. Receipts
+without a `sid` apply as they always did. Nothing to migrate, nothing to delete.
+
 ## 0.5.2 — 2026-07-11 · confidence before the verdict, not after
 
 Reported from real use (#4 — thank you, @kosh-jelly): at VERIFY the tutor praised the

@@ -110,7 +110,30 @@ Relay each `feedback_line` to the learner. On a `recalled` node, the `receipt` o
 
 When `next` returns no frontier: propose the **build** — a transfer artifact in their real world (feature in their actual repo with `TODO(human)` on the load-bearing parts; a taught lesson; an explorable they author; a memo arguing a position). Grade it via the assessor against the topic's `transfer_probe`s; receipts get `kind: transfer`. This is the point of the whole topic — do not let it silently not happen.
 
-## 6 · Close
+## 6 · Book the return (v0.6 — the one step that decides whether any of this mattered)
+
+Everything above produces *encoding*. Encoding decays. **The single highest-leverage act left in the session is getting the learner to come back**, and the engine now measures whether they ever do (`adherence.loop_closure`). Engram's own author encoded seven concepts, never returned, and lost half of them on schedule — the loop has to be *booked*, not hoped for (`docs/08` §The exhibit).
+
+So, **once, at the close** — only if there is no `settings.commitment` already, and never twice in a session — ask one plain question and take their words:
+
+> *"When will you clear these? Give me a moment in your day, not a time."*
+
+Then store it verbatim:
+
+```bash
+python3 "$ENGRAM" commit --cue "<their moment, their words>" --action "<what they'll do>"
+# e.g. --cue "when I open the terminal in the morning" --action "I clear one review"
+```
+
+This is an **implementation intention** — the highest-effect-size adherence move in the literature that costs nothing and steers no one (Gollwitzer & Sheeran 2006: 94 tests, N > 8,000, **d = 0.65**, robust to publication-bias correction; `docs/07` §4).
+
+The discipline, which is the whole point:
+- **It is their sentence, not yours.** Don't suggest one. Don't improve it. If they say *"probably tomorrow sometime,"* that is the commitment — store it as given.
+- **It is never enforced.** Engram does not remind, chase, or check up. The plan is shown back *at the moment it names* and nowhere else. This is not a reminder system.
+- **"No" is a complete answer.** Asked once, declined once, never asked again this session. `commit` is optional forever.
+- A learner who already has one is not asked again — read `model` first.
+
+## 7 · Close
 
 ```bash
 python3 "$ENGRAM" log-session --kind learn --mode <mode> --minutes <est> --items <n> --notes "<one line>"

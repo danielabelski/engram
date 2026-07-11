@@ -18,13 +18,31 @@ python3 "$ENGRAM" experiment list
 python3 "$ENGRAM" misconception list
 ```
 
+## 0 · The binding constraint — report this FIRST, before any other number (v0.6)
+
+```bash
+python3 "$ENGRAM" adherence
+```
+
+Read `loop_closure` — *of the concepts Engram taught and scheduled, how many did the learner ever come back for?* **This number gates every other number on the dashboard**, because the value a learning system produces is Return × Encoding × Retention × Transfer and those terms **multiply** (`docs/08` §2). A perfect encoder with zero return produces exactly zero.
+
+- **`rate == 0.0`** (the loop has never closed): say so **plainly, first, before anything else**, and say what it means — *"You've encoded 7 concepts and reviewed none. Nothing else on this dashboard is real yet: retention is unmeasured because there is nothing to measure. Four minutes fixes that."* Then offer the review (arrow-key) and **stop the check-in there**. Do not narrate calibration, modality, or momentum over a loop that has never run — it would be reporting the decor of an empty house.
+- **`rate < 0.5`**: name it honestly, offer to shrink the load (Sprint default, `quick` reviews), and continue.
+- **`rate ≥ 0.5`**: one line, then move on to momentum.
+
+Never dress this number up and never soften it into a compliment. It is the one number that cannot be gamed, and its whole value is that it is allowed to say *no*.
+
 ## The check-in (default)
 
 Open with **momentum** (Pillar 13, `docs/05-affective-layers.md`) — this is not decoration; *reporting* real progress is itself the motivational intervention (Harkin 2016, d = 0.40, larger when progress is made explicit). Read `stats.momentum` and give one honest line of what genuinely grew this week: reviews cleared, **days of durability added** (`stability_gained_7d`), most-durable memory now (`most_durable`). All real, engine-computed numbers — never a score, never a streak, never a should ("keep it up"). If nothing grew (`stability_gained_7d` ≈ 0, few reviews), say that plainly and move to consistency — don't manufacture a win; a hollow "great progress!" is exactly the controlling praise the oath forbids.
 
 Then narrate, in plain language, at most five of these — each one a number plus what it means plus (maybe) one offered change:
 
-1. **Retention vs. the band.** `recall_by_stability` buckets vs. the ~85% target. Early bucket low → encoding problem (offer: more concrete-first, smaller nodes). Month+ bucket high (>95%) → intervals too timid for them (offer: `model --set memory.desired_retention=0.87`, or a `refit` if eligible).
+1. **Retention — the north star, at last measurable (v0.6).** Read `stats.retention`. Its `buckets` are recall by days-since-first-encoding — `early` 0–3 (still encoding; **never** report it as retention), `7d` 4–14, **`30d` 15–59 (the headline)**, `90d` 60–179, `180d+` — the number `docs/04` named in Phase 0 and the engine never computed until now. Report it with its `n`.
+
+   **You must also voice `unmeasured`, every time, and never paraphrase it away.** It counts the concepts that came due and were *never reviewed*: their recall is **unknown, not absent**, and a retention figure that quietly drops them is survivorship bias with a progress bar. Say it like this: *"Of the retrievals you actually attempted around the 30-day mark, you held 8 of 10. But 12 more concepts came due and were never reviewed — those aren't in the number, and FSRS puts them near 40% right now."* A retention figure reported without its unmeasured denominator is a lie this project is not allowed to tell.
+
+   Then the older, still-useful view: `recall_by_stability` vs. the ~85% band. Early bucket low → encoding problem (offer: more concrete-first, smaller nodes). Month+ bucket high (>95%) → intervals too timid (offer: `model --set memory.desired_retention=0.87`, or a `refit` if eligible).
 2. **Calibration — honestly.** If `calibration.brier` is null: say plainly *"no calibration data yet — confidence only counts when you actually say a number before feedback; it is never estimated for you."* Offer nothing else. If present: translate it (*"when you say 80, you hit 62 — overconfident, mostly on derivable nodes"*), with `n` so they know how thin the data is. No fix needed beyond showing it; calibration improves by being seen.
 3. **Consistency.** Streak and sessions/week — the habit metric that predicts everything. If broken: shrink, don't shame (offer Sprint default, `quick` reviews).
 4. **Misconceptions open.** Recurring ones deserve a contrast-pair artifact or a re-derivation session — offer to schedule it.

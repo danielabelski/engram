@@ -3,9 +3,9 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-0.5.2-6D4AA8.svg" alt="Version 0.5.2">
+  <img src="https://img.shields.io/badge/version-0.6.0-6D4AA8.svg" alt="Version 0.6.0">
   <img src="https://img.shields.io/badge/license-MIT-yellow.svg" alt="MIT License">
-  <img src="https://img.shields.io/badge/selftest-86%2F86-3E7D5A.svg" alt="86/86 checks">
+  <img src="https://img.shields.io/badge/selftest-110%2F110-3E7D5A.svg" alt="110/110 checks">
   <img src="https://img.shields.io/badge/scheduler-FSRS--4.5-6D4AA8.svg" alt="FSRS-4.5">
   <img src="https://img.shields.io/badge/data-100%25%20local-3E7D5A.svg" alt="100% local">
   <a href="https://discord.gg/temm1e"><img src="https://img.shields.io/badge/discord-community-5865F2.svg" alt="Discord community"></a>
@@ -231,6 +231,10 @@ The model never does calendar math; this does:
 |---|---|
 | `init` / `doctor` / `path` | create state · diagnose problems · print state location |
 | `topics` / `topic-status --topic T` | list topics · mastery map with progress bar |
+| **`adherence`** | **the binding constraint: of concepts taught and scheduled, how many you came back for** (`loop_closure`) · return cadence · the full funnel |
+| **`retention`** | **the north star: recall at 7 / 30 / 90 days after encoding** — reported with its `unmeasured` denominator (the concepts that came due and were never reviewed; unknown, not absent) |
+| **`decay --topic T`** | what is dying right now, and what N minutes would save — real FSRS numbers, both arms over the same window |
+| **`commit --cue … --action …`** | your if-then plan, in your words. Stored, shown back at the moment it names, **never enforced** |
 | `next --topic T` / `due` | next frontier concept · due review queue (interleaved) |
 | `rate` / `receipt --file F` | apply one rating · apply assessor receipt batch |
 | `stash add\|list\|count\|clear` | crash-safe queue of answers awaiting grading |
@@ -241,7 +245,7 @@ The model never does calendar math; this does:
 | `stats` / `report` | telemetry JSON (incl. `modality` — explorable vs dialogue retention) · self-contained HTML dashboard |
 | `refit` | fit review intervals to your measured recall (guarded, ≥50 reviews) |
 | `session-start` / `log-session` | ambient nudge (hook) · session telemetry |
-| `selftest` | 86 checks over the FSRS math, state machine, and every hardened boundary |
+| `selftest` | 110 checks over the FSRS math, state machine, adherence/retention arithmetic, and every hardened boundary |
 
 </details>
 

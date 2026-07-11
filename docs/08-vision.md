@@ -29,25 +29,31 @@ Seven concepts were encoded. Seven review dates were booked. The engine did ever
 items overdue. One session in the log. Ever.
 
 Run Engram's own FSRS curve over Engram's own state, and the engine will tell you exactly what
-that costs:
+that costs. This is not a mock-up — it is literal output from `engram.py decay --topic
+transformers` on 2026-07-11, and the v0.6 exit criterion is that it stays reproducible:
 
 ```
-node                     S(days)   R today   R at day 30
-tokens-as-vectors            1.4       71%           41%
-contextual-meaning           3.7       85%           59%
-attention-routing            1.4       71%           41%
-residual-stream              1.4       71%           41%
-attention-ffn-division       1.4       71%           41%
-ffn-mechanics                0.5       51%           25%
-nonlinearity-necessity †     1.4       71%           41%
-─────────────────────────────────────────────────────────
-MEAN                                    70%           41%
+node                     S(days)   R today   R in 30d (no review)
+tokens-as-vectors            1.4       71%             38%
+contextual-meaning           3.7       85%             55%
+attention-routing            1.4       71%             38%
+residual-stream              1.4       71%             38%
+attention-ffn-division       1.4       71%             38%
+ffn-mechanics                0.5       51%             23%
+nonlinearity-necessity †     1.4       71%             38%
+──────────────────────────────────────────────────────────────
+MEAN                                    70%             38%
 
-Expected concepts still recallable at day 30, with zero reviews:      2.9 of 7
-Expected if the seven due reviews are cleared today (≈ 4 minutes):    5.6 of 7
+expected alive 30 days from today, untouched      :  2.7 of 7
+expected alive if the 7 due reviews happen now    :  5.6 of 7   (≈ 4 minutes)
+difference                                        :  2.9 concepts
 ```
 
-Four minutes is worth 2.7 concepts. The system has always been able to compute this. **It has
+Both arms are measured over the **same future window** — the next thirty days — so this is an
+honest comparison rather than a rhetorical one: *do nothing* versus *spend four minutes*, from
+today, on the same seven memories.
+
+Four minutes is worth **2.9 concepts**. The system has always been able to compute this. **It has
 never once said it.** Its entire ambient surface, on the sixth day of a memory dying on
 schedule, was: `[engram] 7 reviews due (~4 min)`.
 

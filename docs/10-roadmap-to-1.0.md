@@ -100,8 +100,8 @@ author; implement it as written.
       says so in `read`. **The system can finally see its own failure.**
 - [ ] `engram.py retention` reports `unmeasured.past_due_never_reviewed == 7` rather than an
       empty, flattering `{}`.
-- [ ] `engram.py decay --topic transformers` reproduces the table in `docs/08` §The exhibit
-      (2.9 → 5.6 of 7 at day 30) from live state.
+- [ ] `engram.py decay --topic transformers` reproduces the table in `docs/08` §The exhibit verbatim
+      (2.7 → 5.6 of 7 over the next 30 days) from live state.
 - [ ] Applying the same `receipt --file` twice leaves `reps == 1` and one receipt on disk.
 - [ ] **The human criterion, and the only one that really counts:** the author completes ≥1
       review on ≥20 of the next 30 days, and `stats.retention.buckets["30d"]` reports a real
@@ -111,7 +111,7 @@ author; implement it as written.
 ### Selftests (must fail without the change)
 
 `adherence` funnel arithmetic on a synthetic ledger (encoded-not-reviewed counted, not dropped) ·
-`retention` bucket boundaries [5,10]/[25,40]/[80,110] and the `unmeasured` count · `decay` FSRS
+`retention` buckets **partition [0,∞)** (sweep every elapsed day — a disjoint-window bug dropped a real day-11 review in the v0.6 live test) · the `unmeasured` count · `decay` FSRS
 projection against a hand-computed R(t) · **double-apply of the same receipt file → `reps == 1`**
 · `commit` round-trips and self-heals when absent · `decay_notice=off` silences the line.
 

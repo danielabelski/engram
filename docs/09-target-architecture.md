@@ -227,13 +227,20 @@ ship first.
 ```jsonc
 // python3 engram.py retention
 {
-  "buckets": {
-    "7d":  {"recalled": 0, "partial": 0, "lapsed": 0, "n": 0, "rate": null},
-    "30d": {"recalled": 0, "partial": 0, "lapsed": 0, "n": 0, "rate": null},
-    "90d": {"recalled": 0, "partial": 0, "lapsed": 0, "n": 0, "rate": null}
+  "buckets": {                      // windows PARTITION [0,inf) — nothing is ever dropped
+    "early":  {"recalled": 0, "partial": 0, "lapsed": 0, "n": 0, "rate": null},  //   0-3d
+    "7d":     {"recalled": 0, "partial": 0, "lapsed": 0, "n": 0, "rate": null},  //   4-14d
+    "30d":    {"recalled": 0, "partial": 0, "lapsed": 0, "n": 0, "rate": null},  //  15-59d  <- headline
+    "90d":    {"recalled": 0, "partial": 0, "lapsed": 0, "n": 0, "rate": null},  //  60-179d
+    "180d+":  {"recalled": 0, "partial": 0, "lapsed": 0, "n": 0, "rate": null}   // 180d+
   },
-  "definition": "of first reviews falling in [5,10] / [25,40] / [80,110] days after encoding, "
-                "the fraction graded recalled-or-partial by a blind assessor",
+  "definition": "of retrievals attempted N days after a concept was FIRST encoded, the fraction "
+                "graded recalled-or-partial. `early` is re-encoding, NEVER pooled into retention.",
+  "coverage": {                     // MUST be complete. Disjoint windows silently drop reviews:
+    "reviews_bucketed": 0,          // the first cut of this used 5-10/25-40/80-110 and a live
+    "reviews_total": 0,             // test caught a real day-11 review vanishing into a gap.
+    "complete": true                // A metric that quietly discards data is worse than none.
+  },
   "unmeasured": {                   // THE HONEST DENOMINATOR — the anti-survivorship guard
     "past_due_never_reviewed": 7,
     "note": "these are not absent from the numerator — they are UNKNOWN, and their expected "
@@ -257,9 +264,10 @@ measure. This is the same discipline as `modality.caveat`, and for the same reas
   "topic": "transformers",
   "encoded": 7, "days_since": 6,
   "now":  {"mean_recall": 0.70, "expected_alive": 4.9},
-  "at_30d_no_review":  {"mean_recall": 0.41, "expected_alive": 2.9},
-  "at_30d_if_reviewed_today": {"mean_recall": 0.80, "expected_alive": 5.6, "minutes": 4},
-  "read": "four minutes today is worth 2.7 concepts at day 30"
+  "at_horizon_no_review":       {"mean_recall": 0.38, "expected_alive": 2.7},
+  "at_horizon_if_reviewed_today": {"mean_recall": 0.80, "expected_alive": 5.6, "minutes": 4},
+  "saved_by_reviewing_today": 2.9,
+  "read": "four minutes today is worth 2.9 concepts over the next 30 days"
 }
 ```
 
