@@ -129,6 +129,23 @@ cp /tmp/e.bak scripts/engram.py
 that is the actual lesson — *writing a check that proves nothing is the default outcome, and the
 mutation test is the only thing that has ever caught one.*
 
+### ⚠ When you FIX a bug class, grep for every sibling — the fix itself is a diff that can regress ⚠ NEW
+
+v1.0.1 fixed a `None`-in-a-`sum` brick in `experiment settle` (finding #5) **and**, in the *same
+release*, switched `compute_modality` to the same `None`-returning predicate (finding #4) — and did
+**not** carry the guard the one function over. v1.0.2 shipped an hour later to fix the brick the fix
+caused. **The test gap mirrored the code gap:** there was a settle-degradation check and no modality
+one, so the suite stayed green over a live crash.
+
+Two rules, both cheap:
+
+- **A fix is a diff, and a diff gets the full gate.** The change you make to *close* a bug can
+  *open* one. Re-run the fuzz and the numbers audit against the fix, not just the feature.
+- **When you apply a guard, `grep` every other call site of the thing it guards.** v0.6.4 taught
+  this for a *rule* (one predicate, four call sites, three wrong). v1.0.2 taught it again for a
+  *guard* (`_outcome` returns `None`; every place that sums it needs the drop). **A predicate and
+  its guard travel together — to every site, or to none.**
+
 The **four** ways a check turns out fake, all seen for real:
 
 - **It asserts a constant, not a behavior.** `check(BUCKETS["30d"] == (15,59))` proves nothing;
