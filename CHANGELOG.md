@@ -1,5 +1,39 @@
 # Changelog
 
+## 0.6.1 — 2026-07-11 · loop_closure could lie in the one direction that matters
+
+A defect in v0.6.0, found by an independent reviewer after release. It is small, it is
+narrow, and it is exactly the kind this release cannot tolerate — **the metric built to say
+*"you never came back"* could say the opposite.**
+
+`rate`'s `--kind` argparse default is `"review"`. The skills always pass an explicit
+`--kind`, so the documented flows are unaffected — but a bare CLI `rate --topic t --node a
+--rating good` writes that node's **only** receipt as `kind: review`. `_by_node` then treated
+that single receipt as *both* the node's day-0 encoding event *and* a retention test, so:
+
+```
+loop_closure:  1 of 1  ·  rate 1.0  ·  "the loop is closing"
+```
+
+…for a learner who had **never come back once**. `retention` likewise counted it as a day-0
+retrieval.
+
+**The fix is a principle, not a patch: a node's FIRST receipt is its encoding event, whatever
+it happens to be labelled.** There was no prior memory to retain, so a first exposure cannot
+be a retention test and must never count toward `loop_closure` or a retention bucket. A
+genuine second retrieval still closes the loop, exactly as before.
+
+Wrong numbers are the only bug class this project is not allowed to ship. A number that is
+wrong in the *flattering* direction — telling a learner their loop is closing when they have
+abandoned it — is the worst instance of it.
+
+### Engine (selftest 119 → 120)
+- `_by_node`: the first receipt is never appended to a node's `reviews` list. Covered by a
+  selftest that asserts both directions (a once-touched node reads `NEVER CLOSED`; a real
+  second retrieval reads `1.0`), and mutation-tested to confirm it fails without the fix.
+
+No schema change, no migration, no default change.
+
 ## 0.6.0 — 2026-07-11 · the loop closes
 
 Engram has been an excellent **encoding** machine bolted to a **retention** machine that

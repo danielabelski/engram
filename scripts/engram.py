@@ -1364,7 +1364,21 @@ def _by_node(receipts):
         # unhashable key and take the whole command down with it
         if not isinstance(topic, str) or not isinstance(node, str) or not topic or not node:
             continue
-        slot = out.setdefault((topic, node), {"first": r, "reviews": []})
+        key = (topic, node)
+        first = key not in out
+        slot = out.setdefault(key, {"first": r, "reviews": []})
+        # A node's FIRST receipt is its ENCODING EVENT — whatever it happens to be labelled.
+        # There was no prior memory to retain, so a first exposure cannot be a retention test,
+        # and it must never count toward `loop_closure` or a retention bucket.
+        #
+        # This matters because `rate`'s `--kind` argparse default is "review": a bare
+        # `rate --topic t --node a --rating good` (the CLI path; the skills always pass an
+        # explicit --kind) writes a node's only receipt as kind=review. Before this guard,
+        # such a node reported loop_closure = 1.0 — "the loop is closing" — for a learner who
+        # had never come back once. The metric built to say "you never returned" said the
+        # opposite, which is the single worst direction for it to be wrong in.
+        if first:
+            continue
         if r.get("kind") == "review" and r.get("rating"):
             slot["reviews"].append(r)
     return out
@@ -2888,6 +2902,30 @@ def cmd_selftest(_args):
                 and "survivorship bias" in low)
     check("dashboard leads with loop_closure and voices the unmeasured denominator",
           fresh(_dashboard_shows_the_loop))
+    # -- a node's FIRST receipt is its ENCODING, never a retention test (v0.6.1) --
+    # `rate`'s --kind argparse default is "review". A bare CLI `rate` therefore writes a
+    # node's ONLY receipt as kind=review — and loop_closure reported 1.0 ("the loop is
+    # closing") for a learner who had never come back once. The metric built to say "you
+    # never returned" said the opposite. That is the worst direction for it to be wrong in,
+    # and it shipped in v0.6.0.
+    def _first_receipt_is_never_a_review(h):
+        _add_ab()
+        _capture(cmd_rate, _ns(topic="t", node="a", rating="good", grade="recalled",
+                               kind="review", production="x"))   # bare-CLI default kind
+        os.environ["ENGRAM_TODAY"] = "2026-07-20"
+        lc = _capture_json(cmd_adherence, _ns())["loop_closure"]
+        ret = _capture_json(cmd_retention, _ns())
+        never = (lc["encoded_past_due"] == 1 and lc["first_review_done"] == 0
+                 and lc["rate"] == 0.0 and "NEVER CLOSED" in lc["read"]
+                 and sum(b["n"] for b in ret["buckets"].values()) == 0)  # no retention claim
+        # …and a genuine SECOND retrieval still closes the loop
+        _capture(cmd_rate, _ns(topic="t", node="a", rating="good", grade="recalled",
+                               kind="review", production="x"))
+        lc2 = _capture_json(cmd_adherence, _ns())["loop_closure"]
+        os.environ["ENGRAM_TODAY"] = "2026-07-06"
+        return never and lc2["first_review_done"] == 1 and lc2["rate"] == 1.0
+    check("a node's first receipt is its encoding, never a review (loop_closure cannot lie up)",
+          fresh(_first_receipt_is_never_a_review))
     # -- the "idempotent no-op" must NOT destroy a second, ungraded production for the node --
     # drop_stash(topic, node) drains EVERY entry for that node. On the no-op path that is data
     # loss: a re-attempt stashed after the first settle would vanish, never graded. The guard
