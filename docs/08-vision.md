@@ -371,7 +371,7 @@ So the final state, stated plainly:
 > **Downward:** the best-verified findings become the default behavior of a tutor anyone can
 > install in thirty seconds and never think about again.
 >
-> **Upward:** every learner's honest receipts — opt-in, anonymized, aggregate — flow back into a
+> **Upward:** every learner's honest receipts — opt-in, consenting, text-stripped — flow back into a
 > public evidence base that can settle questions the field has never been able to settle,
 > because it has never had this data.
 >
@@ -404,8 +404,10 @@ The vision is expansive; the refusals are what keep it honest.
 - **Not a credential.** No certificates, no scores as status. The receipt is for the learner.
 - **Not a flatterer.** The assessor is blind, and — from v0.7 — audited, publicly, against a
   gold set anyone can inspect.
-- **Not a data business.** Aggregation is opt-in, anonymized, free-text-stripped, human-triggered,
-  and the file is written for the learner to *read before* they share it.
+- **Not a data business.** Aggregation is opt-in, consenting, free-text-stripped and human-triggered;
+  the file is written for the learner to *read before* they share it. And it is **attributed, and
+  says so** — a `gh`-posted "anonymous" hash would be a lie, because the envelope carries the
+  identity (`docs/09` §4.6). Engram would rather ask for real consent than fake anonymity.
 
 ### Article 11 — the new constitutional article
 

@@ -187,7 +187,7 @@ selftests.
 | `grader-health` | Read the latest audit; emit a health block. `stats` embeds it. | 0.7 |
 | `transfer --topic T` | Serve a transfer probe for a mature node. Feeds `kind: transfer` receipts. | 0.8 |
 | `experiment` (rewrite) | Randomized, stratified, pre-registered, powered. Engine computes the verdict. | 0.9 |
-| `export --anonymous` | Write a shareable, de-identified receipt bundle **to a file**. No network, ever. | 1.0 |
+| `export` | Write a shareable, **text-stripped** receipt bundle **to a file**. No network, ever — the *agent* posts it, on consent, via `gh`. | 1.0 |
 
 ### 4.1 `adherence` — the metric that would have screamed
 
@@ -370,12 +370,40 @@ This is the machinery that finally lets `docs/06`'s open question 2 (the modalit
 answered instead of merely disclosed: randomize the medium *within* one affordance class, and
 the material stops riding along with the medium.
 
-### 4.6 `export --anonymous` — the Commons, without a single byte of network code
+### 4.6 The Commons — how the data gets out, and why it is **attributed**
+
+**The mistake this section originally made, corrected.** The first draft specced an *anonymous*
+export (`learner: sha256:…`) and hand-waved "the human decides how to share it." Then the obvious
+transport was proposed — `gh` is already installed and authenticated on most Claude Code
+machines — and it breaks the scheme on contact: **a GitHub issue, discussion, or PR posted from
+your account carries your identity.** The salted hash is theatre the moment the envelope is
+signed. You cannot have one-keystroke `gh` upload *and* anonymity. Pick one, and say which out
+loud.
+
+**Engram picks attribution — and it is the stronger design, for the science rather than despite
+it.**
+
+A retention study lives or dies on **longitudinal linkage**: following *the same learner across
+months* is the entire point, because the question is what survives at 30 and 90 days. Anonymous
+one-shot dumps at n = 500 are scientifically weaker than attributed, linkable series at n = 100.
+Attribution also buys deduplication, fabrication detection, the ability to ask a contributor a
+follow-up — and the ability to **credit them**, which is the only honest incentive on offer.
+
+So this is not anonymous telemetry. It is **a consenting, named, informed participant in an open
+study** — which is what every good study has always been.
+
+| | |
+|---|---|
+| **Consent** | Explicit, **per submission**. `CONTRIBUTING-DATA.md` is a real informed-consent document, not a privacy policy. |
+| **The payload** | **All free text still stripped** — productions, probes, claims, rubrics, goals, interests, misconception text, topic strings, node ids. What leaves: grades, timings, stability numbers, arms, and the grader's measured QWK. |
+| **The identity** | Your GitHub handle, **stated plainly in the consent step** — *"this posts publicly as @you"* — because it does. |
+| **Withdrawal** | It is a GitHub post. You can delete it. Say so. |
 
 ```jsonc
 {
   "engram_version": "1.0.0", "exported": "2026-09-01",
-  "learner": "sha256:9f2c…",          // salted local hash; stable, unlinkable
+  "contributor": "@nagisanzenin",      // ATTRIBUTED, and the consent step says so.
+                                       //   A gh-posted "anonymous" hash would be a lie.
   "receipts": [{
     "topic_class": "ml/architectures", // generalized taxonomy, NOT the topic string
     "node_hash": "sha256:41ab…",       // node ids can be identifying; text NEVER leaves
@@ -390,18 +418,37 @@ the material stops riding along with the medium.
 }
 ```
 
-Rules, and they are absolute:
+**The transport — and why the invariant survives it:**
 
-1. **No free text leaves. Ever.** Productions, probes, claims, goals, interests, misconception
-   descriptions — all stripped. The `stripped` list is *in the file*, so the learner can verify
-   the promise rather than trust it.
-2. **The engine writes a file. The human decides.** No upload, no telemetry, no opt-out-by-
-   default. `export` puts a readable JSON in `exports/`, prints the path, and stops. Sharing is
-   a separate, human, deliberate act.
-3. **The learner reads it first.** `/coach export` opens the file and says: this is exactly what
-   would be shared; nothing else can be.
-4. **Every shared receipt carries its grader's measured validity.** A finding aggregated from
-   unaudited oracles is not a finding. This is why §4.4 gates §4.6.
+```
+engram.py export      →  writes exports/<date>.json      ← STDLIB. NO NETWORK. EVER.
+       ↓
+/coach contribute     →  shows you the exact file, in full
+       ↓                  gh auth status
+       ├─ gh absent / unauthenticated / offline → print the path, one line, stop.
+       │                                          No error. No nag. No retry.
+       └─ gh present → arrow-key consent, NAMING the handle it will post under
+                       → gh posts a Discussion to `nagisanzenin/engram-data`
+```
+
+**The engine still contains zero network code.** It writes a file. The **agent** — which already
+has Bash, already reaches the network for WebSearch, and is already trusted with the machine —
+does the posting, only after an explicit human yes. The 100%-local badge stays *structurally*
+true, because the thing that badge is about (`engram.py`) never grows a socket. That is not a
+loophole; it is the correct place to put the boundary.
+
+**Graceful degradation is mandatory**, in the same register as the session hook (*"degrade to
+silence on any failure"*) and `/coach`'s `open` / `xdg-open` / `explorer.exe` cascade. **`gh` is
+never a dependency — only a convenience.** Without it you still have the file, and losing nothing
+by declining is what makes the consent real.
+
+**A separate `engram-data` repo**, not this one: Discussions there keep the issue tracker for
+bugs, the corpus stays readable by anyone, and the aggregation scripts and published findings sit
+beside the data that produced them.
+
+**And the gate that makes any of it worth doing:** every shared receipt carries its grader's
+measured QWK (§4.4). *A finding aggregated from unaudited oracles is not a finding.* **v0.7
+blocks v1.0**, and that is not negotiable.
 
 That is how Engram becomes a scientific instrument without becoming a data business.
 
@@ -482,7 +529,7 @@ The dependency chain is strict, and it is the reason the roadmap is ordered the 
         (v0.9, the method)
               │
               ▼
-     anonymized export + commons    ← you cannot aggregate what you cannot trust
+     consenting export + commons    ← you cannot aggregate what you cannot trust
         (v1.0, the science)
 ```
 

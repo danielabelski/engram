@@ -296,29 +296,43 @@ recall at scale was impossible.
 
 ### What
 
-- **`export --anonymous`** (`docs/09` §4.6) — writes a de-identified receipt bundle **to a file**.
-  All free text stripped: productions, probes, claims, goals, interests, misconception text, topic
-  strings, node ids. The `stripped` list is *inside the file*, so the promise is verifiable rather
-  than trusted.
-- **The engine still contains no network code.** It writes a file; the human reads it; the human
-  decides. Sharing is a separate, deliberate, human act — a PR to a data repo, or nothing.
+- **`export`** (`docs/09` §4.6) — writes a text-stripped receipt bundle **to a file**. Productions,
+  probes, claims, rubrics, goals, interests, misconception text, topic strings and node ids never
+  leave. The `stripped` list sits *inside the file*, so the promise is verifiable rather than trusted.
+- **It is ATTRIBUTED, and the consent step says so out loud.** The obvious transport is `gh` — already
+  installed and authenticated on most Claude Code machines — and **a GitHub post carries your
+  identity**. A "salted anonymous hash" riding inside a signed envelope would be a lie, so Engram
+  does not tell it. Attribution is also the *stronger* design: a retention study needs **longitudinal
+  linkage** (following the same learner across months *is* the question), plus dedup, fabrication
+  detection, and the ability to credit contributors. A consenting, named participant in an open study
+  is what every good study has always had.
+- **The engine still contains no network code.** `export` writes a file and stops. `/coach contribute`
+  shows the learner the exact file, then — only on an explicit yes that **names the handle it will
+  post under** — has `gh` open a Discussion on a separate `engram-data` repo. The *agent* posts;
+  `engram.py` never grows a socket.
+- **Degrade to silence.** No `gh`, no token, offline → the file is still written, the path is still
+  printed, nothing errors and nothing nags. **`gh` is a convenience, never a dependency** — and
+  declining must cost the learner nothing, or the consent is not real.
 - **Every shared receipt carries its grader's measured QWK.** A finding aggregated from unaudited
   oracles is not a finding. **This is why v0.7 gates v1.0.**
-- **Give back:** contributors' dashboards gain honest cohort comparison — with confounds stated,
-  always, in the same voice as `modality.caveat`.
+- **Give back:** contributors' dashboards gain honest cohort comparison — confounds stated always,
+  in the same voice as `modality.caveat`.
 
 ### Done
 
-- [ ] `export --anonymous` produces a file containing **zero** free text (selftest greps for it).
+- [ ] `export` produces a file containing **zero** free text (selftest greps for it).
 - [ ] `grep -rE 'socket|urllib|requests|http' scripts/engram.py` → **zero hits.** The promise is
-      structural, and it is tested.
+      structural, and it is a permanent selftest.
+- [ ] `/coach contribute` works with `gh` **and degrades silently without it.**
+- [ ] `CONTRIBUTING-DATA.md` exists and is a real informed-consent document: what leaves, what never
+      leaves, that it is **public and attributed**, and how to delete it.
 - [ ] First open finding published from N ≥ 100 learners, with its confounds stated in public.
 
 ### Selftests
 
-Export contains no field from the stripped list (property-based: generate receipts with text in
-every field, assert none survives) · learner hash is stable and salted · **the no-network test is
-a selftest, permanently** · export refuses if `grader_unvalidated`.
+Export contains no field from the stripped list (property-based: put text in every field, assert none
+survives) · **the no-network test is a selftest, permanently** · export refuses when
+`grader_unvalidated`.
 
 ---
 
@@ -363,7 +377,7 @@ v0.8  THE CLAIM       transfer probes · transfer state · real capstones
       ↓               you cannot claim capability while measuring only memory
 v0.9  THE METHOD      randomized · stratified · pre-registered · powered
       ↓               you cannot learn from a confounded arm
-v1.0  THE COMMONS     anonymized export · no network code, ever · the fleet answers
+v1.0  THE COMMONS     consenting export · no network code, ever · the fleet answers
 ```
 
 Each layer is load-bearing for the next. Skipping ahead produces a beautiful number that is not
