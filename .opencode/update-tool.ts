@@ -89,6 +89,7 @@ export const engramUpdateTool = tool({
   async execute(args) {
     const manifestPath = resolve(args.target, ".engram-update.jsonc")
     const versionPath = resolve(args.target, ".engram-version.jsonc")
+    const diffPath = resolve(args.target, ".engram-update.diff")
 
     let manifest = readManifest(args.target)
     if (!manifest) {
@@ -113,6 +114,7 @@ export const engramUpdateTool = tool({
         }
         if (existsSync(versionPath)) unlinkSync(versionPath)
         unlinkSync(manifestPath)
+        if (existsSync(diffPath)) unlinkSync(diffPath)
         return `[engram] Auto update applied. ${deleted} files deleted. Restart OpenCode or reload plugins.`
       }
 
@@ -164,6 +166,7 @@ export const engramUpdateTool = tool({
         if (manifest.remaining.length === 0) {
           if (existsSync(versionPath)) unlinkSync(versionPath)
           unlinkSync(manifestPath)
+          if (existsSync(diffPath)) unlinkSync(diffPath)
           return `[engram] All files processed.\n${results.join("\n")}\n\nRestart OpenCode or reload plugins.`
         }
 
@@ -174,6 +177,7 @@ export const engramUpdateTool = tool({
       case "keep_as_is": {
         if (existsSync(versionPath)) unlinkSync(versionPath)
         if (existsSync(manifestPath)) unlinkSync(manifestPath)
+        if (existsSync(diffPath)) unlinkSync(diffPath)
         return "[engram] Update skipped permanently. Restart for fresh extract."
       }
 
@@ -190,6 +194,7 @@ export const engramUpdateTool = tool({
       case "cleanup": {
         if (existsSync(versionPath)) unlinkSync(versionPath)
         if (existsSync(manifestPath)) unlinkSync(manifestPath)
+        if (existsSync(diffPath)) unlinkSync(diffPath)
         return "[engram] No pending updates. State cleaned. Restart to apply."
       }
 

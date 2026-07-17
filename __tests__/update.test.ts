@@ -183,4 +183,26 @@ describe("content-aware diff", () => {
     writeUpdateManifest(src, tmp, "0.9.0", "1.0.2")
     expect(existsSync(resolve(tmp, ".engram-update.jsonc"))).toBe(false)
   })
+
+  it("generates .engram-update.diff when files differ", () => {
+    writeFileSync(resolve(src, "skills", "learn.md"), "line1\nline2\nline3")
+    writeFileSync(resolve(tmp, "skills", "learn.md"), "line1\nCHANGED\nline3")
+
+    writeUpdateManifest(src, tmp, "0.9.0", "1.0.2")
+    expect(existsSync(resolve(tmp, ".engram-update.diff"))).toBe(true)
+
+    const diff = readFileSync(resolve(tmp, ".engram-update.diff"), "utf-8")
+    expect(diff).toContain("--- skills/learn.md (preserved)")
+    expect(diff).toContain("+++ skills/learn.md (v1.0.2)")
+    expect(diff).toContain("+line2")
+    expect(diff).toContain("-CHANGED")
+  })
+
+  it("does NOT generate .engram-update.diff when all files identical", () => {
+    writeFileSync(resolve(src, "skills", "learn.md"), "same")
+    writeFileSync(resolve(tmp, "skills", "learn.md"), "same")
+
+    writeUpdateManifest(src, tmp, "0.9.0", "1.0.2")
+    expect(existsSync(resolve(tmp, ".engram-update.diff"))).toBe(false)
+  })
 })

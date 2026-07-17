@@ -24,6 +24,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync, unlinkSync, readdirSync, copyFileSync } from "node:fs"
 import { resolve, relative } from "node:path"
 import { parseFrontmatter } from "./parse-frontmatter.js"
+import { writeUpdateDiff } from "./diff.js"
 
 const SKILLS_DIR = "skills"
 const AGENTS_DIR = "agents"
@@ -139,6 +140,7 @@ export function writeUpdateManifest(packageRoot: string, target: string, prevVer
     remaining,
   }
   writeFileSync(resolve(target, ".engram-update.jsonc"), JSON.stringify(manifest, null, 2))
+  writeUpdateDiff(packageRoot, target, categories, version)
 }
 
 /** Persists manifest to disk. Used by per-file checkpointing (node -e in the template). */

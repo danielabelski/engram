@@ -229,6 +229,7 @@ STOP. Do not continue.
 Output: "Engram {manifest.from} → {manifest.to}"
 For each category in manifest.categories, output:
   "{name}: {added.length} added, {skipped.length} preserved"
+Mention that .opencode/.engram-update.diff has a detailed view of changes.
 Use the question tool:
   header: "Engram Update"
   question: "How to apply Engram {manifest.from} → {manifest.to}?"

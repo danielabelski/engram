@@ -32,6 +32,7 @@ function createManifestDir(): string {
       command: { added: [], skipped: [] },
     },
   }))
+  writeFileSync(resolve(t, ".engram-update.diff"), "--- a\n+++ b\n@@ -1 +1 @@\n-old\n+new\n")
   return tmp
 }
 
@@ -62,6 +63,7 @@ describe("engramUpdateTool", () => {
       expect(existsSync(resolve(t(tmp), "agents", "assessor.md"))).toBe(false)
       expect(existsSync(resolve(t(tmp), ".engram-update.jsonc"))).toBe(false)
       expect(existsSync(resolve(t(tmp), ".engram-version.jsonc"))).toBe(false)
+      expect(existsSync(resolve(t(tmp), ".engram-update.diff"))).toBe(false)
     })
 
     it("rejects path traversal paths silently", async () => {
@@ -150,6 +152,7 @@ describe("engramUpdateTool", () => {
       expect(result).toContain("DELETED agents/assessor.md")
       expect(existsSync(resolve(t(tmp), ".engram-update.jsonc"))).toBe(false)
       expect(existsSync(resolve(t(tmp), ".engram-version.jsonc"))).toBe(false)
+      expect(existsSync(resolve(t(tmp), ".engram-update.diff"))).toBe(false)
     })
 
     it("handles already-deleted files gracefully", async () => {
@@ -205,6 +208,7 @@ describe("engramUpdateTool", () => {
       expect(result).toContain("State cleaned")
       expect(existsSync(resolve(t(tmp), ".engram-update.jsonc"))).toBe(false)
       expect(existsSync(resolve(t(tmp), ".engram-version.jsonc"))).toBe(false)
+      expect(existsSync(resolve(t(tmp), ".engram-update.diff"))).toBe(false)
     })
 
     it("does not touch user skill files", async () => {
@@ -212,6 +216,7 @@ describe("engramUpdateTool", () => {
       expect(existsSync(resolve(t(tmp), "skills", "learn.md"))).toBe(true)
       expect(existsSync(resolve(t(tmp), "skills", "review.md"))).toBe(true)
       expect(existsSync(resolve(t(tmp), "agents", "assessor.md"))).toBe(true)
+      expect(existsSync(resolve(t(tmp), ".engram-update.diff"))).toBe(false)
     })
   })
 
