@@ -1,5 +1,28 @@
 # Changelog
 
+## 1.0.4 — 2026-07-17 · updates that only speak when something changed
+
+The OpenCode update flow gets honest and inspectable, and its last shell command is gone.
+
+- **Content-aware diff.** `diffCategory` now compares files byte-for-byte
+  (`Buffer.equals`) instead of by existence. Identical files are silently ignored, new
+  files ride the `copyMissing` extract, and only genuinely modified files reach the
+  `skipped` list — so a metadata-only version bump produces no manifest, no
+  pseudo-command, no notification. Unreadable files fail safe into `skipped`.
+- **Unified diff viewer.** A version bump with real changes now also writes
+  `.engram-update.diff` (standard `---/+++/@@` format), and `/engram-update` grows a
+  "View changes" option — the model reads the diff and summarizes what changed before
+  the user decides. Cleaned up alongside the manifest in every resolution mode.
+- **Zero Bash in the update template.** A new `cleanup` mode on the `engram_update`
+  tool replaces the template's last `rm -f`, and an `isWithinTarget` path-traversal
+  guard validates every resolved path in `auto` and `per_file` modes — defense in
+  depth against tampered manifests. Uses `path.sep`, so the guard holds on Windows.
+- **Verification.** Vitest 51 → 88 (new `diffLines` suite incl. an insertion
+  trailing-context regression test, tampered-manifest traversal tests, cleanup-mode
+  tests). Engine selftest unchanged at 214/214.
+
+Contributed by @luanweslley77 (#6), one review round.
+
 ## 1.0.3 — 2026-07-16 · OpenCode — the third platform
 
 Engram now runs on **OpenCode**, alongside Claude Code and Codex. Same skills, same
