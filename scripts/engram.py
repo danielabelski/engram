@@ -32,7 +32,7 @@ SCHEMA = 1
 # The one place the engine knows its own version. Read by `export`, so a shared receipt states
 # which engine produced it — a corpus of receipts from unknown engine versions is not a corpus.
 # Pinned against .claude-plugin/plugin.json by a selftest, so it cannot drift.
-ENGRAM_VERSION = "1.0.5"
+ENGRAM_VERSION = "1.0.6"
 RETENTION_DEFAULT = 0.90
 INTERVAL_MAX = 365
 RETENTION_MIN, RETENTION_MAX = 0.70, 0.97   # sane desired-retention bounds
@@ -1392,9 +1392,11 @@ def cmd_artifact(args):
             if not isinstance(nodes, dict):
                 continue   # hand-edited graph: degrade like every aggregate view
             # audit surface: every registration in the graph, `order` first (stable,
-            # human order), then any hand-added nodes outside it — never invisible
-            order = [n for n in g.get("order", []) if n in nodes]
-            order += sorted(n for n in nodes if n not in set(order))
+            # human order), then any hand-added nodes outside it — never invisible.
+            # Through graph_order, the ONE safe way to walk `order` — the hand-rolled
+            # walk here was the N+1th call site the v1.0.6 fuzz caught (an unhashable
+            # entry in `order` raised at `n in nodes`; mixed-type ids broke the sort).
+            order = graph_order(g, graph_nodes(g))
             for nid in order:
                 node = nodes.get(nid)
                 a = (node or {}).get("artifact") if isinstance(node, dict) else None
@@ -1440,6 +1442,13 @@ def cmd_artifact(args):
 def cmd_misconception(args):
     path = p("misconceptions.json")
     items = read_json(path, [])
+    if not isinstance(items, list):
+        # Mutators DIE on an unusable file (a lossy "repair" they then saved would be
+        # data loss); the read view degrades and `doctor` reports it (v1.0.6 fuzz).
+        if args.action in ("add", "resolve"):
+            die("misconceptions.json has an unusable shape (expected a list, got %s) — "
+                "run `doctor`, then fix or delete it" % type(items).__name__)
+        items = []
     if args.action == "add":
         items.append({"id": gen_id("m"),
                       "ts": today().isoformat(), "topic": args.topic,
@@ -1449,14 +1458,15 @@ def cmd_misconception(args):
     elif args.action == "resolve":
         found = False
         for it in items:
-            if it.get("id") == args.id:
+            if isinstance(it, dict) and it.get("id") == args.id:
                 it["status"] = "resolved"
                 it["resolved_ts"] = today().isoformat()
                 found = True
         if not found:
             die("no misconception with id %s" % args.id)
         write_json(path, items)
-    emit([it for it in items if args.topic in (None, it.get("topic"))])
+    emit([it for it in items
+          if isinstance(it, dict) and args.topic in (None, it.get("topic"))])
 
 # ============================================================= THE METHOD (v0.9)
 # Article 7 ("adapt on evidence, never taxonomy") is the article that replaces learning styles
@@ -3303,8 +3313,16 @@ def _as_list(x):
     return x if isinstance(x, list) else []
 
 def _open_misconceptions():
-    return [m for m in _as_list(read_json(p("misconceptions.json"), []))
-            if isinstance(m, dict) and m.get("status") == "open"]
+    """Render-safe view: the fields the narrator surfaces are coerced to strings HERE, at
+    the gate — `report` escapes them straight into HTML, and an int in a hand-edited file
+    must degrade to text, never AttributeError the whole dashboard (v1.0.6 fuzz)."""
+    out = []
+    for m in _as_list(read_json(p("misconceptions.json"), [])):
+        if isinstance(m, dict) and m.get("status") == "open":
+            out.append(dict(m, topic="%s" % (m.get("topic") or ""),
+                            node="%s" % (m.get("node") or ""),
+                            description="%s" % (m.get("description") or "")))
+    return out
 
 def compute_stats():
     receipts = collect_receipts()
@@ -5111,6 +5129,44 @@ def cmd_selftest(_args):
         return _capture_json(cmd_stats, _ns()) is not None
     check("`experiment status|list` degrade on a type-corrupt experiments.json (never brick)",
           fresh(_experiment_reads_survive_garbage))
+
+    # -- the v1.0.6 fuzz batch: three read paths that bricked on hand-editable garbage --
+    def _artifact_list_survives_garbage_order(h):
+        # `order` holding unhashables raised at `n in nodes` (engram.py:1396, shipped
+        # since v0.x) — cmd_artifact hand-rolled the walk instead of using graph_order.
+        # The registered node must SURVIVE the garbage around it, not just not-crash.
+        write_json(p("graphs", "t.json"),
+                   {"topic": "t", "order": ["a", ["un"], {"hash": 1}, 7, "ghost"],
+                    "nodes": {"a": {"claim": "A", "probe": "a?"},
+                              "b": {"claim": "B", "probe": "b?",
+                                    "artifact": "artifacts/t/b.html"}}})
+        got = _capture_json(cmd_artifact, _ns(action="list"))
+        return [e.get("node") for e in got] == ["b"]
+    check("`artifact list` survives unhashable entries in `order` (walks via graph_order)",
+          fresh(_artifact_list_survives_garbage_order))
+
+    def _misconception_list_survives_garbage(h):
+        # a None entry raised at `it.get` — and the real entry beside it must still list.
+        write_json(p("misconceptions.json"),
+                   [None, 123, "loose", {"id": "m1", "topic": "t", "node": "a",
+                                         "description": "real one", "status": "open"}])
+        got = _capture_json(cmd_misconception, _ns(action="list"))
+        return [m.get("id") for m in got] == ["m1"]
+    check("`misconception list` degrades on non-dict entries (keeps the real ones)",
+          fresh(_misconception_list_survives_garbage))
+
+    def _report_survives_int_misconception_fields(h):
+        # escape(int) raised inside the dashboard render; the gate (_open_misconceptions)
+        # now coerces narrator-facing fields, so the garbage renders as text instead.
+        write_json(p("misconceptions.json"),
+                   [{"id": "m2", "topic": 123123, "node": None, "description": 424242,
+                     "status": "open"}])
+        out_path = os.path.join(h, "d.html")
+        _capture(cmd_report, _ns(out=out_path, allow_outside=True))
+        html = open(out_path, encoding="utf-8").read()
+        return "Open misconceptions" in html and "424242" in html
+    check("`report` renders int-typed misconception fields as text (never AttributeError)",
+          fresh(_report_survives_int_misconception_fields))
 
     # ================================================== THE CLAIM (v0.8, corrected in v0.8.1)
     # `transfer_probe` was authored by the architect since v0.1 and read by NOTHING. v0.8.0 wired

@@ -3,10 +3,10 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-1.0.5-6D4AA8.svg" alt="Version 1.0.5">
+  <img src="https://img.shields.io/badge/version-1.0.6-6D4AA8.svg" alt="Version 1.0.6">
   <a href="https://www.npmjs.com/package/opencode-engram-learning"><img src="https://img.shields.io/npm/v/opencode-engram-learning?label=npm&color=6D4AA8" alt="npm package"></a>
   <img src="https://img.shields.io/badge/license-MIT-yellow.svg" alt="MIT License">
-  <img src="https://img.shields.io/badge/selftest-214%2F214-3E7D5A.svg" alt="214/214 checks">
+  <img src="https://img.shields.io/badge/selftest-217%2F217-3E7D5A.svg" alt="217/217 checks">
   <a href="gold/assessor-gold.jsonl"><img src="https://img.shields.io/badge/grader%20never%20inflates-0%2F198-3E7D5A.svg" alt="0 of 198 blind judgments graded up"></a>
   <img src="https://img.shields.io/badge/scheduler-FSRS--4.5-6D4AA8.svg" alt="FSRS-4.5">
   <a href="CONTRIBUTING-DATA.md"><img src="https://img.shields.io/badge/data-100%25%20local-3E7D5A.svg" alt="100% local — the engine has no network code, proven by a permanent selftest"></a>
@@ -17,7 +17,7 @@
 
 > **The mix-up worth clearing first: Engram is not an agent-memory plugin.** It doesn't give your agent persistent memory, context, or knowledge of your codebase — memory MCPs and context tools do that, *for the agent*. Engram points the other way: **it's a learning system for the human.** Your agent becomes a tutor that makes you do the thinking, a blind examiner that checks you actually got it, and a scheduler that brings each idea back right before your brain drops it. The agent doesn't get smarter. **You do — measurably, with receipts.**
 
-Born as a Claude Code plugin; the same skills and engine now run on four agentic platforms, with a fifth in review:
+Born as a Claude Code plugin; the same skills and engine now run on five agentic platforms:
 
 ```bash
 claude plugin marketplace add nagisanzenin/engram
@@ -59,7 +59,7 @@ Engram is what's missing around the explanation: **a tutor that makes you do the
 | an independent examiner that grades you blind, in writing | self-assessed *"yeah, makes sense"* |
 | plain JSON files on your machine | a cloud service, account, or subscription |
 
-**Concretely, installing it gives you:** three commands (`/learn`, `/review`, `/coach` — exact spelling per platform in the table above), a quiet session nudge that tells you when reviews are due (and says nothing otherwise — on all four platforms), and a state folder at `~/.claude/learning/` that you own, can read, and share across every platform you use.
+**Concretely, installing it gives you:** three commands (`/learn`, `/review`, `/coach` — exact spelling per platform in the table above), a quiet session nudge that tells you when reviews are due (and says nothing otherwise — on every platform except Antigravity, whose hook port is pending), and a state folder at `~/.claude/learning/` that you own, can read, and share across every platform you use.
 
 ```
  recall
@@ -351,7 +351,7 @@ The model never does calendar math; this does:
 | `refit` | fit review intervals to your measured recall (guarded, ≥50 reviews) |
 | **`export [--topic T]`** | a **text-stripped**, **attributed** receipt bundle written **to a file**. Whitelist-constructed — there is no code path by which a production could leave. **Refuses** if your grader is unaudited |
 | `session-start` / `log-session` | ambient nudge (hook) · session telemetry |
-| `selftest` | 214 checks| 213 checks| 213 checks| 207 checks| 201 checks| 200 checks| 192 checks| 191 checks over the FSRS math, state machine, adherence/retention arithmetic, the grader-audit statistics, and every hardened boundary |
+| `selftest` | 217 checks| 214 checks| 213 checks| 213 checks| 207 checks| 201 checks| 200 checks| 192 checks| 191 checks over the FSRS math, state machine, adherence/retention arithmetic, the grader-audit statistics, and every hardened boundary |
 
 </details>
 
