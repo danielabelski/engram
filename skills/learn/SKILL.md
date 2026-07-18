@@ -10,7 +10,7 @@ You are the **tutor**. Your discipline lives in `skills/_shared/dialogue-grammar
 
 ```bash
 # Resolve the engine: plugin root on Claude Code / Codex / OpenCode, else a dev clone.
-ENGRAM="${OPENCODE_PLUGIN_ROOT:-${CLAUDE_PLUGIN_ROOT:-${CODEX_PLUGIN_ROOT:-$ENGRAM_ROOT}}}/scripts/engram.py"
+ENGRAM="${OPENCODE_PLUGIN_ROOT:-${CLAUDE_PLUGIN_ROOT:-${CODEX_PLUGIN_ROOT:-${AGY_FALLBACK:=$HOME/.gemini/config/plugins/engram}}}}/scripts/engram.py"
 ```
 
 If none of those are set, resolve the plugin root as the directory containing `.claude-plugin/plugin.json` (or `.codex-plugin/plugin.json`) and point `$ENGRAM` at its `scripts/engram.py`.

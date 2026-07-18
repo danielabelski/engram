@@ -10,7 +10,7 @@ Read `skills/_shared/dialogue-grammar.md` (hard rules, confidence integrity, par
 
 ```bash
 # Resolve the engine: plugin root on Claude Code / Codex / OpenCode, else a dev clone.
-ENGRAM="${OPENCODE_PLUGIN_ROOT:-${CLAUDE_PLUGIN_ROOT:-${CODEX_PLUGIN_ROOT:-$ENGRAM_ROOT}}}/scripts/engram.py"
+ENGRAM="${OPENCODE_PLUGIN_ROOT:-${CLAUDE_PLUGIN_ROOT:-${CODEX_PLUGIN_ROOT:-${AGY_FALLBACK:=$HOME/.gemini/config/plugins/engram}}}}/scripts/engram.py"
 ```
 
 If none are set, resolve the plugin root as the directory containing `.claude-plugin/plugin.json` (or `.codex-plugin/plugin.json`). **Never inline a learner's answer into a shell command** — pass productions via `--production-file` (or `--production-file -` on stdin); a stray quote or `$(…)` in what they typed would otherwise execute.

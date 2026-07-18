@@ -33,7 +33,7 @@ claude plugin install engram@engram
 | **Google Antigravity** | `agy plugin install https://github.com/nagisanzenin/engram` | `/learn` `/review` `/coach` |
 
 <sub>OpenCode: `opencode.json` is read globally (`~/.config/opencode/opencode.json`) or per-project; pin to source instead of npm with `"plugin": ["git+https://github.com/nagisanzenin/engram.git"]`.</sub><br>
-<sub>Antigravity: The due-review session nudge isn't ported yet (AG hooks use a different mechanism); everything else works the same.</sub>
+<sub>Antigravity: The due-review session nudge isn't ported yet, and the `architect` and `smith` subagents are currently dropped by AG 1.1.4's strict installer. Everything else works the same.</sub>
 
 Then, inside your coding assistant (command spelling per your platform's row above):
 
@@ -42,7 +42,6 @@ Then, inside your coding assistant (command spelling per your platform's row abo
 ```
 
 That's the whole onboarding. No config, no account, no cards to write. Requires `python3` (stock macOS/Linux one is fine — stdlib only). One state folder, every platform: learn in one tool, review in another, same schedule.
-
 
 ---
 
