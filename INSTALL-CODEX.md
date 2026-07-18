@@ -1,6 +1,6 @@
 # Engram on OpenAI Codex
 
-Engram is an **omni-repo**: one codebase that runs on both Claude Code and OpenAI Codex. The core is the same everywhere — the `skills/` (Agent Skills standard `SKILL.md`) and the dependency-free `scripts/engram.py` engine are shared verbatim. This file covers the Codex-specific glue. Claude Code users need none of this; see the main README.
+Engram is an **omni-repo**: one codebase that runs on Claude Code, OpenAI Codex, OpenCode, and Hermes Agent. The core is the same everywhere — the `skills/` (Agent Skills standard `SKILL.md`) and the dependency-free `scripts/engram.py` engine are shared verbatim. This file covers the Codex-specific glue. Claude Code users need none of this; see the main README.
 
 > Codex's plugin, skills, and hooks systems are modeled closely on Claude Code's, so most of this is 1:1. The two genuine differences are called out as **⚠ Codex difference** below.
 

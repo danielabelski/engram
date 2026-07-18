@@ -1,5 +1,56 @@
 # Changelog
 
+## 1.0.5 — 2026-07-18 · Hermes — the fourth platform, and the README stops being misread
+
+Engram now runs on **Nous Research's Hermes Agent** (requested in #9), and the README
+finally says out loud what too many people had to ask: this is a **learning system for
+the human, not an agent-memory plugin**.
+
+- **Hermes support, verified live** — not speculated. Every claim in
+  [INSTALL-HERMES.md](INSTALL-HERMES.md) was exercised against a real Hermes v0.18.2
+  install: external-dir discovery of all three skills (`_shared/` correctly ignored),
+  `/review` and `/coach` slash registration, full SKILL.md injection on invocation
+  (11.5 KB `/review`, 17.9 KB via a `/study` bundle), and the ambient nudge landing in
+  the composed user message at the wire level (request dump inspected).
+- **The install route is clone + `skills.external_dirs`, deliberately.** Hermes' hub
+  installer copies only files referenced inside each skill folder, which would sever the
+  skills from the shared `scripts/engram.py` engine. The doc says so and says why.
+- **The `/learn` collision, handled honestly.** `/learn` is Hermes' own built-in
+  (it authors new agent skills). Hermes detects the clash and skips auto-registering
+  engram's `learn`, printing the escape hatch we document: `/skill learn` — or the
+  optional one-line `/study` bundle. The new Hermes nudge rewrites its own
+  "/learn to continue" line accordingly.
+- **New `hooks/session-start-hermes.sh`** — a `pre_llm_call` port of the SessionStart
+  re-anchor: same self-resolution, same degrade-to-silence contract, plus once-per-session
+  dedupe keyed on Hermes' `session_id`. The engine is untouched (state still shared across
+  every platform via `~/.claude/learning`).
+- **README rework.** Leads with the disambiguation (agent memory vs. human learning —
+  the most common misread), then a five-platform matrix: Claude Code (born here), Codex,
+  OpenCode, Hermes, Antigravity (in review, #8). New first FAQ entry for the same
+  confusion. `INSTALL-CODEX.md` omni-repo line updated.
+- **Known limits, stated in the doc:** headless `hermes chat -q` does not expand
+  slash-skills (interactive CLI/TUI/gateway only); the delegate_task assessor flow and
+  gateway/cron delivery are recipe-documented but not yet driven end-to-end with a
+  capable model. Engine selftest unchanged at 214/214; no engine code changed
+  (`ENGRAM_VERSION` pin only).
+- **And the embarrassing part, per protocol.** The pre-release review (28 agents,
+  10 confirmed findings) caught the brand-new hook **failing open two independent
+  ways** — an empty `session_id` bypassed the once-per-session guard entirely, and a
+  misplaced `2>/dev/null` meant an unwritable TMPDIR both leaked bash errors to stderr
+  and re-nudged on *every* LLM call. The hook whose one-line contract is "ambient,
+  never nagging" shipped to review as a per-call nagger under exactly two failure
+  modes its author had tested around. Both fixed (dedupe now fails *closed* to a
+  per-process key; unwritable marker → silence), plus a 9-case failure battery
+  including both reviewer repros. The same review caught the install doc omitting the
+  `ENGRAM_ROOT` export the skills' engine resolution depends on, the cron recipe
+  delivering the un-rewritten `/learn` it warns about two sections earlier (the hook
+  is now dual-mode: JSON for `pre_llm_call`, plain rewritten text on empty stdin for
+  cron), a missed `package-lock.json` bump, and five README cross-consistency slips
+  (the nudge exists on OpenCode too; "five platforms" counted one still in review;
+  the Codex install cell was missing its second command; the OpenCode global-path and
+  pin-to-source details had been dropped; the `/learn` onboarding example sat unscoped
+  under a matrix that includes Hermes).
+
 ## 1.0.4 — 2026-07-17 · updates that only speak when something changed
 
 The OpenCode update flow gets honest and inspectable, and its last shell command is gone.

@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-1.0.4-6D4AA8.svg" alt="Version 1.0.4">
+  <img src="https://img.shields.io/badge/version-1.0.5-6D4AA8.svg" alt="Version 1.0.5">
   <a href="https://www.npmjs.com/package/opencode-engram-learning"><img src="https://img.shields.io/npm/v/opencode-engram-learning?label=npm&color=6D4AA8" alt="npm package"></a>
   <img src="https://img.shields.io/badge/license-MIT-yellow.svg" alt="MIT License">
   <img src="https://img.shields.io/badge/selftest-214%2F214-3E7D5A.svg" alt="214/214 checks">
@@ -13,35 +13,34 @@
   <a href="https://discord.gg/temm1e"><img src="https://img.shields.io/badge/discord-community-5865F2.svg" alt="Discord community"></a>
 </p>
 
-<h3 align="center">Claude can explain anything. Engram makes sure you still know it next month.</h3>
+<h3 align="center">Your AI can explain anything. Engram makes sure <em>you</em> still know it next month.</h3>
+
+> **The mix-up worth clearing first: Engram is not an agent-memory plugin.** It doesn't give your agent persistent memory, context, or knowledge of your codebase — memory MCPs and context tools do that, *for the agent*. Engram points the other way: **it's a learning system for the human.** Your agent becomes a tutor that makes you do the thinking, a blind examiner that checks you actually got it, and a scheduler that brings each idea back right before your brain drops it. The agent doesn't get smarter. **You do — measurably, with receipts.**
+
+Born as a Claude Code plugin; the same skills and engine now run on four agentic platforms, with a fifth in review:
 
 ```bash
 claude plugin marketplace add nagisanzenin/engram
 claude plugin install engram@engram
 ```
 
-**OpenCode:**
-Add to `~/.config/opencode/opencode.json` (global) or `opencode.json` (project level):
+| Platform | Install | Then |
+|---|---|---|
+| **Claude Code** (born here) | the two commands above | `/learn` `/review` `/coach` |
+| **OpenAI Codex** | `codex plugin marketplace add nagisanzenin/engram` then `codex plugin add engram@engram` → [INSTALL-CODEX.md](INSTALL-CODEX.md) | `$learn` `$review` `$coach` |
+| **OpenCode** | `"plugin": ["opencode-engram-learning"]` in `opencode.json` ([npm](https://www.npmjs.com/package/opencode-engram-learning)) | `/learn` `/review` `/coach` |
+| **Hermes Agent** | clone + `skills.external_dirs` → [INSTALL-HERMES.md](INSTALL-HERMES.md) — verified live on v0.18.2 | `/skill learn` (or `/study`) `/review` `/coach` |
+| **Google Antigravity** | in review — [PR #8](https://github.com/nagisanzenin/engram/pull/8) | — |
 
-```jsonc
-{
-  "$schema": "https://opencode.ai/config.json",
-  "plugin": ["opencode-engram-learning"]   // from npm — or pin to source:
-  // "plugin": ["git+https://github.com/nagisanzenin/engram.git"]
-}
-```
+<sub>OpenCode: `opencode.json` is read globally (`~/.config/opencode/opencode.json`) or per-project; pin to source instead of npm with `"plugin": ["git+https://github.com/nagisanzenin/engram.git"]`.</sub>
 
-Then, inside your coding assistant:
+Then, inside your coding assistant (command spelling per your platform's row above):
 
 ```
 /learn kalman filters        ← or music theory, or Rust lifetimes, or anything
 ```
 
-That's the whole onboarding. No config, no account, no cards to write. Requires `python3` (stock macOS/Linux one is fine — stdlib only).
-
-> **On OpenAI Codex?** Engram is an omni-repo — the same skills and engine run there too (`codex plugin marketplace add nagisanzenin/engram`). See **[INSTALL-CODEX.md](INSTALL-CODEX.md)**.
-
-> **On OpenCode?** Same skills, agents, and engine — add the config above to your global or project-level `opencode.json`.
+That's the whole onboarding. No config, no account, no cards to write. Requires `python3` (stock macOS/Linux one is fine — stdlib only). One state folder, every platform: learn in one tool, review in another, same schedule.
 
 ---
 
@@ -53,12 +52,13 @@ Engram is what's missing around the explanation: **a tutor that makes you do the
 
 | Engram **is** | Engram is **not** |
 |---|---|
+| **a learning system for the human — *you* end up knowing things** | **agent memory — tools that persist what the *agent* knows (different job entirely)** |
 | a tutor that makes you produce answers *before* it explains | a chatbot that explains while you nod along |
 | a memory system — every concept gets a future review date | notes and summaries you'll never reopen |
 | an independent examiner that grades you blind, in writing | self-assessed *"yeah, makes sense"* |
 | plain JSON files on your machine | a cloud service, account, or subscription |
 
-**Concretely, installing it gives you:** three slash commands (`/learn`, `/review`, `/coach`), a quiet session hook that tells you when reviews are due (and says nothing otherwise), and a state folder at `~/.claude/learning/` that you own and can read.
+**Concretely, installing it gives you:** three commands (`/learn`, `/review`, `/coach` — exact spelling per platform in the table above), a quiet session nudge that tells you when reviews are due (and says nothing otherwise — on all four platforms), and a state folder at `~/.claude/learning/` that you own, can read, and share across every platform you use.
 
 ```
  recall
@@ -287,6 +287,9 @@ transformers — Transformers from first principles
 
 ## FAQ
 
+**Is this a memory plugin for my agent?**
+No — the other direction, and this is the most common mix-up. Agent-memory tools (memory MCPs, context managers, "give Claude persistent memory" plugins) store knowledge *for the agent*. Engram uses the agent to install knowledge *in you*: it tutors, blind-grades your free recall, and schedules reviews against your measured forgetting curve. If you want your agent to remember things, you want a different tool. If you want to still know things a month after the chat, you want this one.
+
 **How is this different from just asking Claude to explain?**
 Asking produces understanding; understanding decays on the same curve as everything else. Engram adds the three things a chat can't: verification (did you *actually* get it?), memory across sessions (a learner model in files, not context), and a future (every concept has a scheduled next encounter). The explanation is the easy 20%.
 
@@ -371,12 +374,13 @@ The model never does calendar math; this does:
 skills/             learn / review / coach  (+ _shared: dialogue grammar, Explorable Contract)
 agents/             engram-curriculum-architect · engram-assessor · engram-artifact-smith  (Claude Code)
 codex/agents/       *.toml ports of the three subagents     (Codex)
-hooks/              SessionStart re-anchor (self-resolving; silent when nothing is due)
+hooks/              SessionStart re-anchor (Claude Code/Codex) · pre_llm_call port (Hermes) — self-resolving; silent when nothing is due
 scripts/engram.py   deterministic core: FSRS-4.5, state, receipts, stats, dashboard, selftest
-docs/               theory · prior art · architecture · roadmap  ·  INSTALL-CODEX.md
+docs/               theory · prior art · architecture · roadmap
+INSTALL-CODEX.md · INSTALL-HERMES.md    per-platform glue, at the repo root
 ```
 
-One codebase, two agents: `skills/` and `scripts/engram.py` are shared verbatim; each agent gets its own thin manifest + subagent format. See [INSTALL-CODEX.md](INSTALL-CODEX.md).
+One codebase, many agents: `skills/` and `scripts/engram.py` are shared verbatim; each platform gets its own thin glue (manifest, subagent format, or hook adapter). See [INSTALL-CODEX.md](INSTALL-CODEX.md) · [INSTALL-HERMES.md](INSTALL-HERMES.md).
 
 Separation of powers, enforced by construction: the **tutor** teaches but never grades; the **assessor** grades from a fresh context without seeing the lesson; the **coach** adapts only from receipts; and `engram.py` — never the model — computes every date and stability value. Verification patterns (oracle-driven loops, receipts, re-anchoring) inherited from [claude-code-production-grade-plugin](https://github.com/nagisanzenin/claude-code-production-grade-plugin), transposed from software verification to learning verification.
 
