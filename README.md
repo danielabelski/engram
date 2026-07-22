@@ -406,6 +406,7 @@ Separation of powers, enforced by construction: the **tutor** teaches but never 
 | **[docs/08-vision.md](docs/08-vision.md)** | **The vision:** the one number Engram exists to move, which appealing metrics are traps, and the final state — tutor → instrument → commons. Includes the exhibit: the founder's own memory decaying on schedule |
 | **[docs/09-target-architecture.md](docs/09-target-architecture.md)** | **The target engine:** schemas, the nine new commands, the invariants that must never break, and the order of operations |
 | **[docs/10-roadmap-to-1.0.md](docs/10-roadmap-to-1.0.md)** | **The road to 1.0:** v0.6 → v1.0 as executable work orders — why / what / done / selftests / risk, each shippable by someone who has never seen the repo |
+| **[docs/11-the-procedure-gap.md](docs/11-the-procedure-gap.md)** | **The STEM audit (theory, pre-implementation):** Engram is braced for the conceptual half of math & STEM and blind to the procedural half — Pillars 16–17 (the example ladder; the problem as the probe), the `kind` layer that fixes it, and the gates it must pass first |
 
 ## More from the same workshop
 
