@@ -33,11 +33,17 @@ ideas; the ladder is for execution).
 stashed verbatim as the production (their steps, their answer — note omissions factually).
 The rubric in the stash entry is the node's step rubric, as authored.
 
-## Fresh instances (the isomorph rule)
+## Fresh instances (the algorithmic-variant rule)
 
-- **Never re-serve stored numbers.** At review, and from L2 up, generate a new instance from
-  `practice.problem_frame` (what varies / what stays). Re-serving the same instance converts
-  the procedure into a memorized fact.
+- **The unit of novelty is the ALGORITHMIC VARIANT: change the values, keep the structure
+  and cover story.** At review, and from L2 up, generate from `practice.problem_frame` a
+  variant whose numbers/surface values are new but whose problem class and framing are the
+  node's own — that is the configuration where retrieval practice measurably beats
+  re-studying examples (Yeo & Fazio 2019 exp 2, d = .89 at a week; Lyle 2022's calculus
+  variants). Do NOT wander the cover story at ordinary reviews: fully re-clothed isomorphs
+  erase the retention advantage and cost time — **far-transfer clothing is the
+  `transfer_probe`'s job, at maturity, exactly as Engram already does it.** Never re-serve
+  the stored numbers verbatim (nothing supports answer-recall as practice).
 - **Compute the answer key by EXECUTION before presenting** — run the arithmetic/code
   (`python3 -c …`), never trust your own inspection; generated problems carry a measured
   ~3–5% wrong-key rate even in execution-checked pipelines, and a wrong key here becomes a
@@ -55,7 +61,12 @@ When a due procedure node has `practice.discriminates_from` siblings that are al
 mature), open the item with the **naming step**: present the fresh instance and ask *“which
 technique applies here — and what in the problem tells you?”* — then the solve. Blocked
 practice tells the learner the strategy; a real problem arrives unlabeled. Never turn the
-naming step into a menu (it is knowledge; menus are for navigation).
+naming step into a menu (it is knowledge; menus are for navigation). Two conditions carry
+the effect, so honor both: **only confusable siblings** (that is what `discriminates_from`
+declares — interleaving dissimilar content buys nothing), and **juxtaposition** — serve the
+confusable items adjacently in the *same* session (the contrast collapses when the pair is
+scattered across days; discrimination is a within-session lever, spacing a between-session
+one).
 
 ## Grading a procedure production (tutor at /review; assessor everywhere else)
 
@@ -76,13 +87,19 @@ the knowledge (the derivable-owes-a-why rule, transposed to execution). When tor
 `slip` and `conceptual`, choose `conceptual` — the flattering read (“you knew it, you just
 slipped”) is the direction the schedule cannot afford.
 
-## The erroneous-example rung (earned, never for novices)
+## The erroneous-example rung (after instruction, scaffolded, never a default)
 
-Only after the learner's **first clean solve** on the node (error-finding harms true
-novices): present a worked solution seeded with ONE bug — from `practice.error_bank` or,
-better, from the learner's own misconception log — and ask them to find, explain, and fix
-it. Grade the find-and-fix as an ordinary production. This is also the preferred re-encode
-move on a second lapse (review special cases), *if* the node has had a clean solve before.
+Never before the node's RESOLVE — error-finding without any instruction is where it harms.
+After instruction, any learner may get one, **always in the interactive find → explain →
+fix shape with feedback** (the scaffolding is what removed the prior-knowledge gate in the
+replication evidence): present a worked solution seeded with ONE bug — from
+`practice.error_bank` or, better, from the learner's own misconception log — and ask them
+to find it, explain *why* it's wrong, and fix it. Grade the find-and-fix as an ordinary
+production. Expect the payoff on *later* reviews, not this session — and expect the moment
+to feel worse than it works (error-hunting measurably raises confusion while still helping
+delayed learning), so frame it and don't stack two in a session. It is also the preferred
+re-encode move on a second lapse. A targeted tool for misconception repair — never the
+default diet (on average performance, correct examples beat error-seeded ones).
 
 ## Session shape
 

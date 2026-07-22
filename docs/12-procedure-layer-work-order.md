@@ -114,7 +114,9 @@ node (first review), `_outcome` as the shared predicate, per-kind
 `{first_review_recall, n}`, floor = `MODALITY_MIN_N` per compared arm, `read` compares
 **procedure vs concept only** (`fact` reported, never versus'd), and a `caveat` that ships
 *inside the payload*: kinds are different material by construction — never a causal claim;
-this is also the instrument for docs/11 §7.3 (does FSRS fit skills?). Plus
+this is also the instrument for docs/11 §7.3 (FSRS has no published validation on skills;
+DAS3H — Choffin et al. 2019 — is the skill-level precedent, and this telemetry is what
+would justify moving toward it). Plus
 `procedure_slip_share`: among procedure-node review receipts that carry `error_class`,
 the slip fraction — with `n_classified` as its own labeled denominator (never `n`).
 `report` gains a "Knowledge kinds" section in the modality section's mold (bars + the
@@ -161,12 +163,14 @@ step rubrics an assessor can grade against.
 Contract, holding: the ladder (L1 worked example + per-step self-explanation → L2
 completion → L3 faded, principle-bearing blanks → L4 cold solve), rung selection from
 measured state (pretest result, lapses, node state — the `docs/06` worked-drive signals),
-the fresh-instance rule (NEVER re-serve stored numbers at review; generate from
-`problem_frame`; **compute the answer key by execution before showing anything**), the
-discrimination beat (when a due procedure node's `discriminates_from` sibling is co-due or
-mature: "which technique, and why — then solve"), the erroneous-example rung (only after
-first clean solve; seed from `error_bank` or the learner's own misconception log), slip
-handling (method right + execution slip → grade `partial`, rating `hard`,
+the fresh-instance rule (**algorithmic variants**: new values, same structure and cover
+story — the verified retention configuration; full re-clothing stays `transfer_probe`'s
+job; NEVER stored numbers; **compute the answer key by execution before showing
+anything**), the discrimination beat (confusable `discriminates_from` siblings served
+**adjacently, same session** — juxtaposition carries the effect: g 0.73 adjacent vs 0.22
+scattered; "which technique, and why — then solve"), the erroneous-example rung (after
+instruction, always find-explain-fix-scaffolded, never a default; the clean-solve gate
+died in verification), slip handling (method right + execution slip → grade `partial`, rating `hard`,
 `--error-class slip`; right answer + wrong/absent method → capped at `partial`,
 `--error-class conceptual`; both wrong → `lapsed`), and the PS-I boundary (the *concept*
 node that licenses a procedure keeps the native PREDICT→STRUGGLE opening; the ladder is
@@ -258,8 +262,12 @@ labeled "of classified errors", with `n_classified` beside it.
 
 ## 5 · What could still stop the ship (owned risks)
 
-- **G1 fallout:** if adversarial verification kills a docs/11 claim, its design consequence
-  dies with it before code lands (this file updates, not just 11).
+- **G1 fallout: RESOLVED 2026-07-22** — the three-verifier pass ran (docs/11 §Method):
+  5 corrections, 1 inverted rule (isomorphs → algorithmic variants), 1 regated rule
+  (erroneous examples), all applied to docs/11, this file, the problem grammar, and the
+  agent specs in the same branch. Two hard requirements were promoted out of it: review
+  format stays congruent (the solve IS the review) and every grading carries elaborated
+  feedback — without both, transfer prices near zero (Pan & Rickard, bias-adjusted).
 - **Gold reveals a grading hole:** a `graded_up > 0` on procedure items is a spec bug in
   WO-6 — fix the spec, re-run all three audits, only then restate the badge.
 - **Dogfood contamination:** all agent tests run against the release tree by absolute path
