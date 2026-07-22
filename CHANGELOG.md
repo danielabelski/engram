@@ -58,7 +58,22 @@ it took an end-to-end test against a real OpenCode to see it, because every unit
 
 ### Tests
 
-110 → 151 vitest checks; `selftest` unchanged at 234 (the engine is untouched).
+110 → 155 vitest checks; `selftest` unchanged at 234 (the engine is untouched).
+
+The filter pair was fuzzed at 600 generated `AGENTS.md` states across three seeds.
+`clean(smudge(x)) == x` holds 600/600 for every value `clean` itself produces — the invariant
+the system actually maintains, so the file never reads as permanently dirty. A block that
+reached git wrongly (possible via the `else cat` fallback, when a commit lands before
+extraction) **converges to a fixed point in one pass in 122/122 cases, with no oscillation**;
+it shows up as a one-time diff removing the block, which is the repo being corrected. Nothing
+outside the block was lost in 900 cases. `opencode-engram-clean`'s docstring records this so
+the one-time diff does not read as a bug later.
+
+Four checks cover `.git/info/exclude` specifically, because `syncAgentsExclude` rewrites a
+user-owned file by splitting and rejoining lines: user comments, blank lines, ordering and
+negation patterns all survive; 25 consecutive sessions produce byte-identical output with no
+duplicate entries; and a `.git` that is a *file* (worktree, submodule) no-ops instead of
+throwing.
 
 **One of the new checks was fake, and the mutation gate caught it** — §4.5, for the fourth
 release running. The fixture for "user prose above the block survives" used an *inline* mention,

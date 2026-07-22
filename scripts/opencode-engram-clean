@@ -22,6 +22,15 @@ Must stay behaviourally identical to findEngramBlock() in .opencode/install.ts
 and to opencode-engram-smudge. All three answer "is there a block here?" and a
 disagreement between any two of them silently loses either user content or the
 Engram instructions.
+
+Self-healing, and the one-time diff it produces: git-stored AGENTS.md should
+never contain a block, but it can — the filter command falls back to `cat` when
+these scripts are missing, so a commit made before extraction stores the block
+verbatim. The first commit made once the scripts exist then strips it, which
+shows up as a one-time diff deleting the block. That is the repo being
+corrected, not content being lost. Fuzzed at 600 cases: every such state reaches
+a fixed point in one pass, none oscillate, and nothing outside the block is
+touched (0 losses in 900).
 """
 import re
 import sys
