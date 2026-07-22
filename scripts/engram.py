@@ -32,7 +32,7 @@ SCHEMA = 1
 # The one place the engine knows its own version. Read by `export`, so a shared receipt states
 # which engine produced it — a corpus of receipts from unknown engine versions is not a corpus.
 # Pinned against .claude-plugin/plugin.json by a selftest, so it cannot drift.
-ENGRAM_VERSION = "1.1.0"
+ENGRAM_VERSION = "1.1.1"
 RETENTION_DEFAULT = 0.90
 INTERVAL_MAX = 365
 RETENTION_MIN, RETENTION_MAX = 0.70, 0.97   # sane desired-retention bounds
@@ -684,6 +684,16 @@ def cmd_add_topic(args):
         # An unknown literal is DROPPED with a warning, never fatal: an older or newer
         # architect must not brick an add, and absence is byte-compatible v1.0.8 behavior
         # (node_kind_of treats a kindless node as `concept`, or `fact` when arbitrary).
+        # A --replace payload that drops `kind` silently demoted a procedure to a concept:
+        # /review stopped serving fresh instances, and a tutor still passing --error-class
+        # produced receipts stamped `concept` carrying a slip. Warn, as every other
+        # reclassification here does (v1.1.1, §7.5 post-release review).
+        _prev = old_nodes.get(nid)
+        if isinstance(_prev, dict):
+            _was, _now = node_kind_of(_prev), node_kind_of(node)
+            if _was != _now:
+                warnings.append("%s: knowledge kind changed %s -> %s by this payload; new "
+                                "receipts will be stamped %s" % (nid, _was, _now, _now))
         if node.get("kind") is not None and node.get("kind") not in NODE_KINDS:
             warnings.append("%s: unknown kind %r dropped (use %s)"
                             % (nid, node.get("kind"), "|".join(NODE_KINDS)))
@@ -2152,7 +2162,14 @@ def compute_by_kind(receipts):
     # forming, would bias the share toward "slip", which is precisely this number's
     # flattering direction. The first cut iterated every receipt kind; caught by the
     # pre-release adversarial review, fixture made to diverge (§4.5).
+    # ⚠ THE FLOOR COUNTS NODES, NOT JUDGMENTS (v1.1.1). The recall arms above take one
+    # datum per node on purpose; the slip split did not, so ONE node the learner had failed
+    # five times running supplied the entire denominator and the page read "100% were
+    # execution slips" — the single most flattering thing it could say about a node that
+    # keeps dying. `n_nodes` is published beside `n_classified` and the narrators gate on
+    # it. (Found by the §7.5 post-release review.)
     slips = classified = 0
+    nodes = set()
     for r in _review_receipts(receipts):
         if r.get("node_kind") != "procedure":
             continue
@@ -2160,9 +2177,14 @@ def compute_by_kind(receipts):
         if ec in ERROR_CLASSES:
             classified += 1
             slips += 1 if ec == "slip" else 0
+            t, n = r.get("topic"), r.get("node")
+            if isinstance(t, str) and isinstance(n, str):
+                nodes.add((t, n))
     out["procedure_slip_share"] = {
         "share": (round(slips / classified, 3) if classified else None),
         "n_classified": classified,
+        "n_nodes": len(nodes),
+        "min_nodes": SLIP_SHARE_MIN_N,
     }
     out["caveat"] = BY_KIND_CAVEAT
     return out
@@ -2417,16 +2439,33 @@ GOLD_ANSWER_KEYS = ("gold_grade", "case_type")
 #
 # **What survives — and is STRONGER for the correction:** `direction.graded_up`. Every authoring
 # error was LENIENT, so fixing them moved the bar DOWN, giving the grader more room to be caught
-# inflating. Across 198 blind judgments it still graded UP exactly zero times. That is a safety
+# inflating. Across 258 blind judgments it still graded UP exactly zero times. That is a safety
 # property, it does not depend on the gold being perfectly calibrated, and it is the only claim
 # here that was ever worth a badge.
 GOLD_ADJUDICATION = "authored"      # -> "human" only when someone who is NOT the author has done it
-GOLD_CIRCULARITY = (
-    "GOLD SET IS AUTHORED, NOT INDEPENDENTLY HUMAN-ADJUDICATED, and 5 items were corrected after "
-    "the grader disagreed with them. A QWK measured against it CANNOT certify a grader from the "
-    "same model family: when the author concedes to the grader, the agreement that follows "
-    "measures the author. The figure that survives this is `direction.graded_up` — a safety "
-    "property that does not depend on the gold being perfectly calibrated.")
+# ⚠ The corrected-item count is DERIVED, never hardcoded (v1.1.1). It shipped as a literal
+# "5" and the set reached 6 `disputed` records in the same release that added the sixth —
+# so the string that exists to disclose the instrument's contamination was UNDERSTATING it,
+# on the dashboard, in the flattering direction. A provenance field that lies is worse than
+# none (§4.8 Q6). Found by the §7.5 post-release review.
+# The clean anchors — everything else in the set is a deliberate trap. Derived so the
+# published percentage can never go stale against the file (v1.1.1).
+GOLD_CLEAN_CASE_TYPES = ("clear-recalled", "clear-lapsed", "procedure-clean", "procedure-lapsed")
+
+def _adversarial_pct(items):
+    items = [it for it in items if isinstance(it, dict)]
+    if not items:
+        return 0
+    clean = sum(1 for it in items if it.get("case_type") in GOLD_CLEAN_CASE_TYPES)
+    return int(round((len(items) - clean) / len(items) * 100))
+
+def _gold_circularity(n_corrected):
+    return ("GOLD SET IS AUTHORED, NOT INDEPENDENTLY HUMAN-ADJUDICATED, and %d items were "
+            "corrected after the grader disagreed with them. A QWK measured against it CANNOT "
+            "certify a grader from the same model family: when the author concedes to the "
+            "grader, the agreement that follows measures the author. The figure that survives "
+            "this is `direction.graded_up` — a safety property that does not depend on the "
+            "gold being perfectly calibrated." % n_corrected)
 
 def _plugin_root():
     """The plugin/repo root — the dir holding scripts/ and gold/. realpath, so a
@@ -2724,7 +2763,8 @@ def cmd_assessor_audit(args):
     # a caveat about what a QWK from THIS gold set can mean at all, and it must outlive any
     # particular verdict. When someone who is not the author adjudicates the set, this goes away.
     if GOLD_ADJUDICATION != "human" and not getattr(args, "gold", None):
-        reasons.append(GOLD_CIRCULARITY)
+        reasons.append(_gold_circularity(
+            sum(1 for it in gold if isinstance(it, dict) and it.get("disputed"))))
     if gold_meta["modified"]:
         reasons.append(
             "GROUND TRUTH IS NOT THE SHIPPED GOLD SET: %s. This verdict is not comparable to "
@@ -2862,13 +2902,15 @@ def cmd_assessor_audit(args):
         "gold_local_added": gold_meta["local_added"],
         "identical_runs": identical_runs,
         "duplicate_sids": dupes,
-        # The gold set is 88% ADVERSARIAL BY DESIGN, so this bias is measured on the cases where
+        # The gold set is ADVERSARIAL BY DESIGN (share derived, never hardcoded — it shipped as
+        # a stale "88%" from the 66-item era), so this bias is measured on the cases where
         # graders fail — not on the mix of productions a learner actually writes. It is the right
         # number for "can this grader be fooled"; it is an upper bound on "how wrong are my
         # receipts". Saying so is cheaper than being quietly misread.
         "bias_note": ("leniency_bias is measured over a deliberately adversarial gold set "
-                      "(88% trap cases). It bounds how far the grader CAN be pushed; it is not "
-                      "an unbiased estimate of its bias on ordinary productions."),
+                      "(%d%% trap cases). It bounds how far the grader CAN be pushed; it is not "
+                      "an unbiased estimate of its bias on ordinary productions."
+                      % _adversarial_pct(gold)),
         "coverage": {"gold_n": len(gold), "measured": n,
                      "ungraded": ungraded, "unknown_sids": unknown, "duplicate_sids": dupes,
                      "gold_skipped_malformed": skipped, "complete": coverage_complete},
@@ -3926,7 +3968,7 @@ EXPORT_STRIPPED = ("production", "probe", "claim", "rubric", "goal", "interests"
 EXPORT_RECEIPT_KEYS = ("topic_hash", "node_hash", "kind", "grade", "rating", "confidence",
                        "days_since_encode", "s_before", "s_after", "interval_days",
                        "retrievability", "artifact", "arm_hash", "stratum_hash",
-                       "grader_hash", "grader_qwk", "node_kind", "error_class")
+                       "grader_hash", "grader_qwk", "node_kind", "error_class", "self_graded")
 # `kind`/`grade`/`rating`/`node_kind`/`error_class` are the only strings that leave un-hashed,
 # because each is a CLOSED ENUM the engine validates — not free text. Anything a human
 # authored is hashed. (`node_kind` and `error_class` are stamped by the engine itself from
@@ -4000,7 +4042,13 @@ def cmd_export(args):
                                  if isinstance(stratum, str) and stratum else None),
                 "grader_hash": (_hash12("grader|" + r["grader"])
                                 if isinstance(r.get("grader"), str) and r["grader"] else None),
-                "grader_qwk": qwk,          # a receipt carries its oracle's MEASURED validity
+                # ⚠ ONLY where an audited grader actually wrote the verdict (v1.1.1). This
+                # stamped the assessor's QWK onto TUTOR-graded review receipts too — and v1.1
+                # made that material by exporting `error_class`, which only the tutor writes.
+                # A corpus consumer would have read one oracle's measured validity over two
+                # populations, one of which nothing has ever audited. Null is honest.
+                "grader_qwk": (qwk if isinstance(r.get("grader"), str) and r["grader"] else None),
+                "self_graded": not (isinstance(r.get("grader"), str) and r["grader"]),
                 "node_kind": (r.get("node_kind")
                               if r.get("node_kind") in _EXPORT_ENUM["node_kind"] else None),
                 "error_class": (r.get("error_class")
@@ -4411,23 +4459,37 @@ def cmd_report(args):
         slip_line = ""
         # Quote the slip PERCENTAGE only at a real n; below the floor, counts are facts
         # and rates are noise ("100% were slips" off n=1 is the flattering read).
-        if (slip.get("n_classified") or 0) >= SLIP_SHARE_MIN_N:
-            slip_line = (" Of the %d classified procedure-review errors, %d%% were "
-                         "execution slips rather than wrong method — a slip is priced "
-                         "gentler (partial/hard), because a transcription error is not a "
-                         "memory lapse." % (slip["n_classified"],
-                                            int((slip.get("share") or 0) * 100)))
+        if (slip.get("n_nodes") or 0) >= SLIP_SHARE_MIN_N:
+            slip_line = (" Of the %d classified procedure-review errors across %d nodes, "
+                         "%d%% were execution slips rather than wrong method — a slip is "
+                         "priced gentler (partial/hard), because a transcription error is "
+                         "not a memory lapse." % (slip["n_classified"], slip["n_nodes"],
+                                                  int((slip.get("share") or 0) * 100)))
         elif slip.get("n_classified"):
-            slip_line = (" %d procedure-review error(s) classified so far — counts, not "
-                         "rates, until there are at least %d."
-                         % (slip["n_classified"], SLIP_SHARE_MIN_N))
+            slip_line = (" %d procedure-review error(s) classified so far, across %d node(s) "
+                         "— counts, not rates, until at least %d nodes have one."
+                         % (slip["n_classified"], slip.get("n_nodes") or 0,
+                            SLIP_SHARE_MIN_N))
+        # ⚠ EVERY arm carries its OWN floor (v1.1.1). `read` is computed from procedure-vs-
+        # concept only, so gating the bar loop on `read` alone let `fact` — which the read
+        # never looks at — render a full-width 100% bar off a SINGLE first review. That is
+        # the same unearned-optimistic-rate bug this section already fixed once, one line
+        # further down, and the v1.1.0 selftest could not see it because its fixture built
+        # no fact nodes. Found by the §7.5 post-release review. Sub-floor kinds are reported
+        # as counts, which are facts; a rate off n=1 is not.
         if bk["read"] != "insufficient-data":
-            for k, v in kind_arms:
+            shown = [(k, v) for k, v in kind_arms if v["n"] >= bk["min_n"]]
+            thin = [(k, v) for k, v in kind_arms if v["n"] < bk["min_n"]]
+            for k, v in shown:
                 parts.append("<div class='hbar'><span class='lab mono'>%s</span>"
                              "<span class='track'><span class='fill' style='width:%d%%'></span></span>"
                              "<span class='val'>%d%% first-review recall · n=%d</span></div>"
                              % (escape(k), int(v["first_review_recall"] * 100),
                                 int(v["first_review_recall"] * 100), v["n"]))
+            if thin:
+                parts.append("<p class='note'>Below the ≥%d floor, counts only: %s.</p>"
+                             % (bk["min_n"],
+                                escape(" · ".join("%s n=%d" % (k, v["n"]) for k, v in thin))))
             parts.append("<p class='note'>%s — recall split by what each node IS (concept / "
                          "procedure / fact), from your own receipts.%s <b>Read it carefully:"
                          "</b> %s</p>"
@@ -7242,8 +7304,13 @@ def cmd_selftest(_args):
     # -- every shared receipt carries its oracle's MEASURED validity --
     def _every_receipt_carries_its_graders_qwk(h):
         _add_ab()
-        _capture(cmd_rate, _ns(topic="t", node="a", rating="good", grade="recalled",
-                               kind="encode", production="x"))
+        # one ASSESSOR-graded receipt (carries `grader`) …
+        _capture(cmd_receipt, _ns(json=json.dumps([{
+            "topic": "t", "node": "a", "rating": "good", "grade": "recalled",
+            "kind": "encode", "production": "x", "grader": "engram-assessor"}])))
+        # … and one TUTOR-graded receipt (the /review path: no `grader`, source self)
+        _capture(cmd_rate, _ns(topic="t", node="b", rating="good", grade="recalled",
+                               kind="encode", production="y"))
         gold = [_gitem("h%02d" % i, _ORD[i % 3]) for i in range(33)]
         # a grader that is right 32/33 -> a real, sub-1.0 QWK
         run = [{"sid": g["sid"],
@@ -7253,9 +7320,17 @@ def cmd_selftest(_args):
         res = _capture_json(cmd_export, _ns(topic=None, contributor=None,
                                             allow_unvalidated=False))
         b = json.load(open(res["path"], encoding="utf-8"))
+        graded = [r for r in b["receipts"] if r["grader_hash"]]
+        selfg = [r for r in b["receipts"] if not r["grader_hash"]]
         return (a["verdict"] in ("pass", "warn")
                 and 0 < a["qwk"] < 1.0
-                and all(r["grader_qwk"] == a["qwk"] for r in b["receipts"])
+                # the audited oracle's receipts carry its MEASURED validity …
+                and graded and all(r["grader_qwk"] == a["qwk"] and r["self_graded"] is False
+                                   for r in graded)
+                # … and the tutor's carry NULL and say so: stamping the assessor's QWK on a
+                # verdict the assessor never wrote is a borrowed credential (v1.1.1)
+                and selfg and all(r["grader_qwk"] is None and r["self_graded"] is True
+                                  for r in selfg)
                 and b["grader"]["qwk"] == a["qwk"]
                 # …and the gold set's own circularity limit rides along with it
                 and b["grader"]["gold_adjudication"] == "authored")
@@ -8037,6 +8112,101 @@ def cmd_selftest(_args):
                 and recs[1]["node_kind"] is None and recs[1]["error_class"] is None)
     check("export carries node_kind/error_class as closed enums, nulls garbage",
           fresh(_export_kinds))
+
+    # ===== v1.1.1 · the §7.5 post-release review's findings =====
+
+    # -- EVERY kind carries its own floor: `fact` rendered a 100% bar off n=1 because the
+    #    gate read procedure-vs-concept only (HIGH; the same bug this section fixed once) --
+    def _fact_arm_has_its_own_floor(h):
+        nodes, order = {}, []
+        for i in range(MODALITY_MIN_N):
+            for kind in ("concept", "procedure"):
+                nid = "%s%d" % (kind[0], i)
+                order.append(nid)
+                n = {"claim": "C", "probe": "p"}
+                if kind == "procedure":
+                    n["kind"] = "procedure"
+                    n["practice"] = {"problem_frame": "vary"}
+                nodes[nid] = n
+        order.append("f0")
+        nodes["f0"] = {"claim": "F", "probe": "pf", "arbitrary": True}   # ONE fact node
+        _capture(cmd_add_topic, _ns(json=json.dumps(
+            {"topic": "big", "title": "B", "order": order, "nodes": nodes})))
+        for nid in order:
+            _capture(cmd_rate, _ns(topic="big", node=nid, rating="good", kind="encode"))
+        os.environ["ENGRAM_TODAY"] = "2026-07-20"
+        for nid in order:
+            _capture(cmd_rate, _ns(topic="big", node=nid, rating="good", grade="recalled",
+                                   kind="review"))
+        bk = _capture_json(cmd_stats, _ns())["by_kind"]
+        out = _capture_json(cmd_report, _ns())
+        with open(out["path"], encoding="utf-8") as f:
+            html = f.read()
+        # the read is computed, the two big arms render — and the single-datum fact arm
+        # is reported as a COUNT, never as a rate
+        return (bk["read"] != "insufficient-data" and bk["fact"]["n"] == 1
+                and html.count("first-review recall") == 2      # concept + procedure only
+                and "Below the ≥%d floor" % bk["min_n"] in html
+                and "fact n=1" in html)
+    check("dashboard: every kind arm carries its own floor (a 1-datum `fact` never draws a rate)",
+          fresh(_fact_arm_has_its_own_floor))
+
+    # -- the slip floor counts NODES, not judgments: one node failed 5x must not read
+    #    "100% were execution slips" (HIGH) --
+    def _slip_floor_counts_nodes(h):
+        _add_kinds()
+        _capture(cmd_rate, _ns(topic="k", node="p1", rating="good", kind="encode"))
+        os.environ["ENGRAM_TODAY"] = "2026-07-20"
+        for _ in range(SLIP_SHARE_MIN_N):      # 5 reviews, ONE node, all slips
+            _capture(cmd_rate, _ns(topic="k", node="p1", rating="hard", grade="partial",
+                                   kind="review", error_class="slip"))
+        bk = _capture_json(cmd_stats, _ns())["by_kind"]
+        s = bk["procedure_slip_share"]
+        out = _capture_json(cmd_report, _ns())
+        with open(out["path"], encoding="utf-8") as f:
+            html = f.read()
+        return (s["n_classified"] == SLIP_SHARE_MIN_N and s["n_nodes"] == 1
+                and s["min_nodes"] == SLIP_SHARE_MIN_N
+                and "execution slips" not in html          # no percentage off one node
+                and "counts, not rates" in html)
+    check("slip share: the floor counts NODES, so one repeatedly-failed node quotes no rate",
+          fresh(_slip_floor_counts_nodes))
+
+    # -- the circularity caveat COUNTS the corrections instead of asserting a stale literal --
+    def _circularity_count_is_derived(h):
+        # end-to-end on the BUNDLED set (the override path deliberately suppresses this
+        # caveat), so the number the learner reads is the number of `disputed` records
+        # actually in the shipped file — not a literal that goes stale the next time the
+        # author concedes an item.
+        gold, _meta = load_gold()
+        truth = sum(1 for it in gold if it.get("disputed"))
+        run = [{"sid": g["sid"], "grade": g["gold_grade"]} for g in gold]
+        rp = os.path.join(h, "runs.json")
+        with open(rp, "w", encoding="utf-8") as f:
+            json.dump({"grader": "g", "runs": [run, run,
+                                               run[:-1] + [dict(run[-1], grade="partial")]]}, f)
+        a = _capture_json(cmd_assessor_audit, _ns(file=rp, json=None, gold=None))
+        joined = " ".join(a.get("reasons") or [])
+        return (truth >= 1 and ("%d items were corrected" % truth) in joined
+                and _gold_circularity(9).count("9 items") == 1)
+    check("the circularity caveat derives its corrected-item count from the gold file",
+          fresh(_circularity_count_is_derived))
+
+    # -- a --replace payload that changes a node's knowledge kind says so --
+    def _replace_warns_on_kind_change(h):
+        _add_kinds()
+        # a clean re-authored payload (engine-owned fields absent, as a real architect
+        # rebuild would be) that simply forgets `kind` on the procedure node
+        g = {"topic": "k", "title": "K", "order": ["c1", "p1", "f1"], "nodes": {
+            "c1": {"claim": "C", "probe": "pc"},
+            "p1": {"claim": "P", "probe": "pp"},              # kind + practice dropped
+            "f1": {"claim": "F", "probe": "pf", "arbitrary": True}}}
+        out = json.loads(_capture(cmd_add_topic, _ns(json=json.dumps(g), replace=True)))
+        return (node_kind_of(load_graph("k")["nodes"]["p1"]) == "concept"
+                and any("knowledge kind changed procedure -> concept" in w
+                        for w in out["warnings"]))
+    check("add-topic --replace warns when a payload demotes a procedure to a concept",
+          fresh(_replace_warns_on_kind_change))
 
     # -- read_jsonl gates out valid-JSON-NON-OBJECT lines (a bare `5` in receipts bricked
     #    every aggregate read since v0.1; found by the v1.1.0 fuzz) --

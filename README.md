@@ -3,10 +3,10 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-1.1.0-6D4AA8.svg" alt="Version 1.1.0">
+  <img src="https://img.shields.io/badge/version-1.1.1-6D4AA8.svg" alt="Version 1.1.1">
   <a href="https://www.npmjs.com/package/opencode-engram-learning"><img src="https://img.shields.io/npm/v/opencode-engram-learning?label=npm&color=6D4AA8" alt="npm package"></a>
   <img src="https://img.shields.io/badge/license-MIT-yellow.svg" alt="MIT License">
-  <img src="https://img.shields.io/badge/selftest-230%2F230-3E7D5A.svg" alt="230/230 checks">
+  <img src="https://img.shields.io/badge/selftest-234%2F234-3E7D5A.svg" alt="234/234 checks">
   <a href="gold/assessor-gold.jsonl"><img src="https://img.shields.io/badge/grader%20inflations-0%2F258-3E7D5A.svg" alt="0 of 258 blind judgments graded up, on the shipping spec"></a>
   <img src="https://img.shields.io/badge/scheduler-FSRS--4.5-6D4AA8.svg" alt="FSRS-4.5">
   <a href="CONTRIBUTING-DATA.md"><img src="https://img.shields.io/badge/data-100%25%20local-3E7D5A.svg" alt="100% local — the engine has no network code, proven by a permanent selftest"></a>
@@ -223,7 +223,7 @@ Correcting them moves agreement from 0.889 to 0.965 and QWK to **0.978**. And he
 
 Worse — the corrections were *prompted by the grader's own disagreements*. So the QWK that follows is **circular**: an authored gold set cannot validate a grader from the same model family, because when the two disagree and the author concedes, the agreement that follows measures only the author's willingness to concede. **The engine now says so on every single audit**, in the `read` string, until someone who is not the author has adjudicated the set.
 
-That is why the badge is no longer a QWK. **`0/198 graded up` is a safety property that does not depend on the gold being perfectly calibrated** — and correcting the gold *downward* only made it a stronger claim, because it lowered the bar the grader had to not exceed. It still never did.
+That is why the badge is no longer a QWK. **`0/258 graded up` is a safety property that does not depend on the gold being perfectly calibrated** — and correcting the gold *downward* only made it a stronger claim, because it lowered the bar the grader had to not exceed. It still never did.
 
 One genuine disagreement (`g_054`) is **deliberately left in**, because the reviewer read both readings and judged the gold's defensible. *An instrument with no disagreement left in it measures nothing.*
 
@@ -357,7 +357,7 @@ The model never does calendar math; this does:
 | `refit` | fit review intervals to your measured recall (guarded, ≥50 reviews) |
 | **`export [--topic T]`** | a **text-stripped**, **attributed** receipt bundle written **to a file**. Whitelist-constructed — there is no code path by which a production could leave. **Refuses** if your grader is unaudited |
 | `session-start` / `log-session` | ambient nudge (hook) · session telemetry |
-| `selftest` | 230 checks| 217 checks| 214 checks| 213 checks| 213 checks| 207 checks| 201 checks| 200 checks| 192 checks| 191 checks over the FSRS math, state machine, adherence/retention arithmetic, the grader-audit statistics, and every hardened boundary |
+| `selftest` | 234 checks| 230 checks| 217 checks| 214 checks| 213 checks| 213 checks| 207 checks| 201 checks| 200 checks| 192 checks| 191 checks over the FSRS math, state machine, adherence/retention arithmetic, the grader-audit statistics, and every hardened boundary |
 
 </details>
 
