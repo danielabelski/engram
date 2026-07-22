@@ -3,7 +3,7 @@ import { tmpdir } from "node:os"
 import { mkdtempSync, rmSync, writeFileSync, mkdirSync, existsSync, readFileSync, copyFileSync } from "node:fs"
 import { resolve } from "node:path"
 import { execSync } from "node:child_process"
-import { selfExtract, syncProjectState } from "../.opencode/install"
+import { selfExtract, syncProjectState, writeOrPrependAgentsMd } from "../.opencode/install"
 
 describe("git filter integration", () => {
   let tmp: string
@@ -733,5 +733,112 @@ describe("clean and smudge cannot disagree", () => {
     expect(out).not.toContain("ENGRAM RULE")
     expect(out).toContain("my rules")
     expect(out).toContain("<!-- /engram -->")   // the user's orphan line survives
+  })
+})
+
+// ---------------------------------------------------------------------------
+// v1.2.2 — the MED/LOW findings left open by v1.2.1.
+// ---------------------------------------------------------------------------
+
+describe("marker recognition and seam stability", () => {
+  const scriptsDir = resolve(__dirname, "..", "scripts")
+
+  // MED 4. OPEN_RE demanded a version, so a user who tidied the marker down to
+  // `<!-- engram -->` made the filter blind to it: the block was committed
+  // verbatim AND a second copy prepended on checkout, so the model got the
+  // instructions twice and every commit carried a KB of Engram text.
+  it("MED 4: a version-less <!-- engram --> marker is still a marker", () => {
+    const tmp = mkdtempSync(resolve(tmpdir(), "engram-m4-"))
+    mkdirSync(resolve(tmp, ".opencode"), { recursive: true })
+    writeFileSync(resolve(tmp, ".opencode", ".engram-smudge-template"),
+      "<!-- engram v1.2.2 -->\nENGRAM RULE\n<!-- /engram -->\n")
+
+    const disk = "<!-- engram -->\nENGRAM RULE\n<!-- /engram -->\nmy rules\n"
+
+    const stored = execSync(`python3 ${resolve(scriptsDir, "opencode-engram-clean")}`,
+      { input: disk, cwd: tmp }).toString()
+    expect(stored, "block leaked into git").not.toContain("ENGRAM RULE")
+    expect(stored).toContain("my rules")
+
+    const smudged = execSync(`python3 ${resolve(scriptsDir, "opencode-engram-smudge")}`,
+      { input: disk, cwd: tmp }).toString()
+    expect((smudged.match(/ENGRAM RULE/g) || []).length, "block duplicated").toBe(1)
+    rmSync(tmp, { recursive: true })
+  })
+
+  // MED 6. install wrote `block + "\n\n" + existing` while smudge writes
+  // `template + content`, so installing over a TRACKED AGENTS.md changed the
+  // bytes clean hands back to git — the user's file showed modified, with a
+  // diff adding two blank lines they never typed.
+  it("MED 6: installing over a tracked AGENTS.md leaves git's bytes unchanged", () => {
+    const tmp = mkdtempSync(resolve(tmpdir(), "engram-m6-"))
+    const target = resolve(tmp, ".opencode")
+    mkdirSync(target, { recursive: true })
+
+    const original = "# Team rules\n\n- run make lint\n"
+    writeFileSync(resolve(tmp, "AGENTS.md"), original)
+    writeOrPrependAgentsMd(target, "1.2.2")
+
+    const onDisk = readFileSync(resolve(tmp, "AGENTS.md"), "utf-8")
+    expect(onDisk).toContain("<!-- engram v1.2.2 -->")
+
+    const stored = execSync(`python3 ${resolve(scriptsDir, "opencode-engram-clean")}`,
+      { input: onDisk, cwd: tmp }).toString()
+    expect(stored, "engram dirtied the user's tracked file").toBe(original)
+    rmSync(tmp, { recursive: true })
+  })
+
+  // LOW 7. The blank-line strip was /^\n+/, which cannot see a CRLF blank line
+  // — its first character is \r — so a CRLF file kept blank lines at the seam
+  // that an LF file had removed. The property is that the two agree.
+  //
+  // An earlier version of this check asserted "the seam does not GROW across
+  // bumps". It never grew under either regex, so the check passed with the fix
+  // reverted and proved nothing. What separates them is CRLF blank lines
+  // sitting directly below the block, which that fixture never produced.
+  it("LOW 7: CRLF and LF files get the same seam below the block", () => {
+    const seamFor = (eol: string) => {
+      const tmp = mkdtempSync(resolve(tmpdir(), "engram-l7-"))
+      const target = resolve(tmp, ".opencode")
+      mkdirSync(target, { recursive: true })
+
+      writeOrPrependAgentsMd(target, "1.1.0")
+      const agents = resolve(tmp, "AGENTS.md")
+      // user content below the block, separated by two blank lines in `eol`
+      writeFileSync(agents, readFileSync(agents, "utf-8") + eol + eol + `# MY RULES${eol}`)
+
+      writeOrPrependAgentsMd(target, "1.2.2")   // bump
+      const c = readFileSync(agents, "utf-8")
+      const seam = c.slice(c.lastIndexOf("<!-- /engram -->") + "<!-- /engram -->".length, c.indexOf("# MY RULES"))
+      rmSync(tmp, { recursive: true })
+      return (seam.match(/\n/g) || []).length
+    }
+
+    const lf = seamFor("\n")
+    const crlf = seamFor("\r\n")
+    expect(crlf, `LF seam ${lf} newlines, CRLF seam ${crlf}`).toBe(lf)
+  })
+})
+
+describe("clean strips every block in one pass", () => {
+  const scriptsDir = resolve(__dirname, "..", "scripts")
+
+  // Found by the v1.2.2 fuzz, not by hand. clean removed one block per run, so
+  // stacked markers left another complete block behind — and git runs the clean
+  // filter exactly ONCE per staging, so that leftover went into the repo.
+  it("stacked blocks are all removed, and outside content survives", () => {
+    const out = execSync(`python3 ${resolve(scriptsDir, "opencode-engram-clean")}`, {
+      input: "<!-- engram -->\n<!-- engram -->\nINNER\n<!-- /engram -->\n<!-- /engram -->\n# Regles\n",
+    }).toString()
+    expect(out).toBe("# Regles\n")
+  })
+
+  it("is idempotent — a second pass changes nothing", () => {
+    const once = execSync(`python3 ${resolve(scriptsDir, "opencode-engram-clean")}`, {
+      input: "<!-- engram v1 -->\nA\n<!-- /engram -->\nkeep\n<!-- engram v2 -->\nB\n<!-- /engram -->\n",
+    }).toString()
+    const twice = execSync(`python3 ${resolve(scriptsDir, "opencode-engram-clean")}`, { input: once }).toString()
+    expect(once).toBe("keep\n")
+    expect(twice).toBe(once)
   })
 })

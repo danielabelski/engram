@@ -28,8 +28,11 @@ import sys
 # missing, so the shared code is copied and a test forbids drift instead.
 #
 # Markers must be alone on their line; an inline mention is prose. `\r?$` so
-# CRLF files match without the document being normalised.
-OPEN_RE = re.compile(r"^<!-- engram v.+? -->\r?$", re.MULTILINE)
+# CRLF files match without the document being normalised. The version is
+# OPTIONAL: a user who tidies the marker down to `<!-- engram -->` used to
+# make the filter blind to it, so the block was committed verbatim AND a
+# second copy prepended on checkout.
+OPEN_RE = re.compile(r"^<!-- engram(?: v.+?)? -->\r?$", re.MULTILINE)
 CLOSE_RE = re.compile(r"^<!-- /engram -->\r?$", re.MULTILINE)
 
 

@@ -1,5 +1,49 @@
 # Changelog
 
+## 1.2.2 — 2026-07-22 · closing the review's MED/LOW tail, and one the fuzz found
+
+v1.2.1 fixed the two HIGH defects and left four smaller findings open. Three were real on
+1.2.1 and are fixed here; one had already been closed by the 1.2.1 locator rewrite. Fixing
+them surfaced a fifth that no reviewer had seen.
+
+- **A version-less `<!-- engram -->` marker was invisible to the filters.** `OPEN_RE` demanded
+  a version, so a user who tidied the marker by hand got the worst of both: the block was
+  **committed verbatim** on `git add`, and a **second copy prepended** on checkout. The model
+  then received the instructions twice and every commit carried a KB of Engram text. The
+  version is optional now, in both filters and in `install.ts`.
+- **Installing over a tracked `AGENTS.md` dirtied the user's file.** `writeOrPrependAgentsMd`
+  laid the block down as `block + "\n\n" + existing` while the smudge filter writes
+  `template + content`. The two blank lines survived `clean`, so the bytes handed back to git
+  differed from what the user had committed and their file showed modified with a diff they
+  never wrote. Install now matches smudge exactly.
+- **CRLF files gained blank lines at the seam on every version bump.** The strip was `/^\n+/`,
+  which cannot see a CRLF blank line — its first character is `\r`. An LF file got a one-line
+  seam, a CRLF file got three.
+- **MED 6 as originally reported (a permanently-dirty file) was already gone**, closed by the
+  1.2.1 locator rewrite. Verified rather than assumed before it was ticked off.
+
+### The one the fuzz found
+
+`clean` removed **one** block per invocation. Stacked markers — exactly what the version-less
+marker bug produced by prepending a second block — left another complete block behind, and git
+runs the clean filter **once** per staging. So a file with two blocks committed with one still
+in it. `clean` now strips every block in a single pass; each iteration removes at least two
+marker lines, so it terminates. Nothing outside a marker pair is touched.
+
+Fuzz on this release, 1500 states across six seeds under `LC_ALL=en_US.UTF-8`: **0 crashes,
+0 states with no block on disk, 0 leaked to git, 0 duplicated, 0 non-idempotent, 0 roundtrip
+failures.**
+
+### Tests
+
+160 → 165 vitest checks; `selftest` unchanged at 234.
+
+**A second fake check, caught by the same gate as the first.** The LOW-7 check asserted "the
+seam does not GROW across bumps" — which was true under both the old and new strip, so it
+passed with the fix reverted. The property that actually separates them is that a CRLF file
+and an LF file get the *same* seam; rewritten that way it fails correctly (CRLF 3, LF 1). Two
+fake checks in two releases is the rate §4.5 warns about, and both were invisible until the
+mutation was run.
 ## 1.2.1 — 2026-07-22 · what §7.5 found in v1.2.0, forty minutes later
 
 v1.2.0 shipped with every gate green and **two HIGH defects of the exact class it was cut to

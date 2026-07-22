@@ -55,7 +55,7 @@ The following references are available and resolve to the extracted copy in .ope
 
 const MARKER_OPEN = "<!-- engram v"
 const MARKER_CLOSE = "<!-- /engram -->"
-const MARKER_OPEN_RE = /^<!-- engram v(.+?) -->\r?$/gm
+const MARKER_OPEN_RE = /^<!-- engram(?: v(.+?))? -->\r?$/gm
 const MARKER_CLOSE_RE = /^<!-- \/engram -->\r?$/gm
 
 function buildEngramBlock(version: string): string {
@@ -133,10 +133,12 @@ export function writeOrPrependAgentsMd(target: string, version: string): boolean
 
   if (found) {
     const before = existing.slice(0, found.start)
-    const after = existing.slice(found.end).replace(/^\n+/, "")
-    writeFileSync(agentsPath, before + block + (after ? "\n\n" + after : ""))
+    // Strip blank lines in either flavour — /^\n+/ alone left a CRLF file's
+    // leading \r\n behind and the seam gained blank lines on every bump.
+    const after = existing.slice(found.end).replace(/^(?:\r?\n)+/, "")
+    writeFileSync(agentsPath, before + block + after)
   } else {
-    writeFileSync(agentsPath, existing.trim() ? block + "\n\n" + existing : block)
+    writeFileSync(agentsPath, existing.trim() ? block + existing : block)
   }
   return false
 }

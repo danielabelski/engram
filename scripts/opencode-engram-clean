@@ -32,8 +32,11 @@ import sys
 # missing, so the shared code is copied and a test forbids drift instead.
 #
 # Markers must be alone on their line; an inline mention is prose. `\r?$` so
-# CRLF files match without the document being normalised.
-OPEN_RE = re.compile(r"^<!-- engram v.+? -->\r?$", re.MULTILINE)
+# CRLF files match without the document being normalised. The version is
+# OPTIONAL: a user who tidies the marker down to `<!-- engram -->` used to
+# make the filter blind to it, so the block was committed verbatim AND a
+# second copy prepended on checkout.
+OPEN_RE = re.compile(r"^<!-- engram(?: v.+?)? -->\r?$", re.MULTILINE)
 CLOSE_RE = re.compile(r"^<!-- /engram -->\r?$", re.MULTILINE)
 
 
@@ -78,10 +81,20 @@ def find_block(text):
 
 def main():
     text = decode(sys.stdin.buffer.read())
-    span = find_block(text)
-    if span is not None:
+
+    # Strip EVERY block, not just the first. Stacked markers — which the
+    # version-less-marker bug used to create by prepending a second block —
+    # leave another complete block behind after one removal, and git runs the
+    # clean filter exactly once per staging, so a single pass committed a block
+    # into the repo. Each iteration removes at least two marker lines, so this
+    # terminates.
+    while True:
+        span = find_block(text)
+        if span is None:
+            break
         start, end = span
         text = text[:start] + text[end:]
+
     sys.stdout.buffer.write(encode(text))
 
 
