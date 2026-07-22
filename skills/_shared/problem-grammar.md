@@ -71,9 +71,19 @@ safety oath applies to arithmetic too).
 | **Right answer, wrong/absent method** | at best `partial` | `hard` | `conceptual` |
 | Method wrong or missing, wherever the answer landed | `lapsed` | `again` | `conceptual` |
 
-**Tiebreak when rows 3–4 both match** (right answer, method wrong/absent): ≥1 rubric
-criterion genuinely met → `partial` (row 3 outranks); zero criteria met → `lapsed` — an
-answer with no work meets no criterion. A slip is never logged as a misconception; a
+**Tiebreak when rows 3–4 both match, and it applies ONLY when the final answer is right:**
+≥1 rubric criterion genuinely met → `partial` (row 3 outranks); zero criteria met →
+`lapsed` — an answer with no work meets no criterion.
+
+**⚠ Counting criteria never overrides a wrong core.** That tiebreak is not a general rule.
+**When the final answer is wrong, or when the criterion that failed IS the node's central
+claim, the grade is `lapsed` however many peripheral criteria were met.** Setting up
+correctly and then blowing the defining step is a lapse, not a partial — the claim is what
+is being tested, and credit for scaffolding does not buy credit for the thing itself. (This
+is measured, not theoretical: a grader awarded `partial` for "u/dv chosen correctly" on an
+integration-by-parts answer whose *formula sign* was wrong and whose result was therefore
+wrong. **You are the grader for every procedure review, and unlike the assessor, nothing
+audits you** — so read this rule as written.) A slip is never logged as a misconception; a
 *recurring* slip pattern is its own entry. Torn between `slip` and `conceptual` →
 `conceptual`: "you just slipped" is the flattering direction, and the schedule cannot
 afford flattery.

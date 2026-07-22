@@ -1,5 +1,53 @@
 # Changelog
 
+## 1.1.1 — 2026-07-22 · What the post-release review found, three hours later
+
+v1.1.0 shipped with every gate green. §7.5 — an independent reviewer reading the **shipped**
+code with one standing instruction, *"find a number that is wrong, especially one wrong in
+the direction that reassures the learner"* — found **two HIGH defects of exactly that class**,
+plus four more. Every one is a number a learner would have believed.
+
+- **The `fact` bar had no floor and drew 100% off a single review.** v1.1.0 fixed precisely
+  this bug for the `concept`/`procedure` bars — by gating them on `read`, which is computed
+  from *procedure vs concept only*. The `fact` arm, which `read` never looks at, sailed
+  through the gate one line further down. The v1.1.0 selftest could not see it because its
+  fixture built no fact nodes. **Every arm now carries its own floor**; sub-floor kinds are
+  listed as counts.
+- **`procedure_slip_share`'s floor counted judgments, not nodes.** One procedure node the
+  learner had failed **five times running** supplied the whole denominator, and the page
+  read *"100% were execution slips"* — the single most flattering sentence available about
+  a node that keeps dying, printed directly beside a recall rate the same page had just
+  suppressed for want of data. The floor now counts **distinct nodes** (`n_nodes` ships
+  beside `n_classified`), and both narrators gate on it.
+- **The circularity caveat understated the author's own concessions** — hardcoded "5 items
+  were corrected" while the shipped gold carried **6**, the sixth being the one corrected
+  *because all three grader runs disagreed*. The string that exists to disclose the
+  instrument's contamination was itself contaminated, in the flattering direction. Now
+  derived from the file. The adversarial-share figure in `bias_note` was likewise stale
+  (88%, from the 66-item era; the shipped set is 86%) and is now computed.
+- **The wrong-core grading rule reached 2 of the 3 rulebooks — and missed the one that
+  matters most.** Traced through the shipped skills: the assessor only ever writes `encode`
+  receipts, so **every `review` receipt carrying `error_class` — the entire denominator of
+  `procedure_slip_share` — is written by the /review tutor**, grading from
+  `problem-grammar.md`, which lacked the rule. The tutor is also the one grader `/coach
+  audit` never measures. Both shared grammars now carry it, and say so.
+- **`export` stamped the audited assessor's QWK on tutor-graded receipts.** v1.1 made this
+  material by exporting `error_class`, a tutor-only field. A corpus consumer would have read
+  one oracle's measured validity across two populations, one of which nothing has ever
+  audited. `grader_qwk` is now null where no audited grader signed the verdict, and each
+  receipt carries `self_graded`.
+- **`add-topic --replace` silently demoted procedure → concept.** A re-authored payload that
+  forgot `kind` stopped /review serving fresh instances, and a tutor still passing
+  `--error-class` wrote receipts stamped `concept` carrying a slip. It now warns, as every
+  other reclassification in that function already did.
+
+Selftest 230 → **234**, every new check mutation-tested; fuzz re-run clean (0 / 600).
+
+**The lesson, which is the same one every time:** the gate that catches a bug class will not
+catch that bug class in itself. v1.1.0's dashboard-floor fix shipped a dashboard-floor bug
+one line away, and its slip-share fix shipped a slip-share denominator bug. Only the reviewer
+who did not write the code saw either.
+
 ## 1.1.0 — 2026-07-22 · The procedure layer — practice what must be performed
 
 Engram could teach *why* and could not teach *doing*. Every node was a declarative claim,

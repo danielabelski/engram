@@ -146,6 +146,8 @@ Rounding rule: when torn between two ratings, round **down**. Inflated ratings p
 Procedure productions add one distinction (full table in `problem-grammar.md`): a
 method-right **slip** is `partial`/`hard` + `--error-class slip` (a transcription error is
 not a memory lapse); a right answer over a wrong/absent method is *at best* `partial` +
-`--error-class conceptual` — the answer is not the knowledge. Torn between the two classes →
+`--error-class conceptual` — the answer is not the knowledge. **And "at best partial" is a
+ceiling, never a floor: when the answer is wrong, or when the step that failed IS the node's
+central claim, it is `lapsed` no matter how much of the setup was right.** Torn between the two classes →
 `conceptual`; "you just slipped" is the flattering direction, and flattery is the one the
 schedule cannot afford.
