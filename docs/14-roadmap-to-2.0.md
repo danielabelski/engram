@@ -609,7 +609,14 @@ alarming in practice, the migration can ship default-off for one release
 
 ---
 
-# v1.7 — **The Open Frontier** *(any level of mastery)*
+# v1.7 — **The Open Frontier** — ✅ SHIPPED 2026-07-24
+
+> **RESULT.** `--extend` (arcs, byte-identical preservation of every existing node, collision
+> refused), `next --frontier-of` (the adaptive pretest that credits nothing), `doctor --fix`
+> (validated, one at a time, no `--yes`), and two-phase authoring in the skills where the
+> platform supports it. Both ends of "any level of mastery" are now open.
+
+# v1.7 — the original work order *(any level of mastery)*
 
 > *An expert entering a 20-node topic gets a novice's walk; a finished topic dead-ends at
 > its capstone; and the one slow step in the product still greets first-time users with

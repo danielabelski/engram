@@ -32,7 +32,7 @@ SCHEMA = 1
 # The one place the engine knows its own version. Read by `export`, so a shared receipt states
 # which engine produced it — a corpus of receipts from unknown engine versions is not a corpus.
 # Pinned against .claude-plugin/plugin.json by a selftest, so it cannot drift.
-ENGRAM_VERSION = "1.6.0"
+ENGRAM_VERSION = "1.7.0"
 RETENTION_DEFAULT = 0.90
 INTERVAL_MAX = 365
 RETENTION_MIN, RETENTION_MAX = 0.70, 0.97   # sane desired-retention bounds
@@ -656,11 +656,47 @@ def cmd_add_topic(args):
 
     path = p("graphs", g["topic"] + ".json")
     old = read_json(path) if os.path.exists(path) else None
+    extending = bool(getattr(args, "extend", False))
+    if extending:
+        # ── ARC N+1 (v1.7): a topic that is FINISHED must not be a dead end ────────────
+        #
+        # `--replace` re-authors a whole graph; `--extend` adds to one. The distinction is
+        # the point: an extension may only ADD, so an id collision is refused rather than
+        # silently overwriting a node the learner has receipts for. (The founder's own
+        # graphs are hand-titled "Arc 1 of 2" precisely because this verb did not exist.)
+        if not isinstance(old, dict) or not isinstance(old.get("nodes"), dict):
+            die("cannot extend %s: no existing topic (drop --extend to create it)" % g["topic"])
+        existing = {nid: n for nid, n in old["nodes"].items() if isinstance(n, dict)}
+        clash = sorted(set(g["nodes"]) & set(existing))
+        if clash:
+            die("--extend may only ADD nodes; these already exist: %s. Re-authoring an "
+                "existing node is `--replace` (which carries schedules forward) — extending "
+                "must never silently overwrite a node the learner has receipts for."
+                % ", ".join(clash[:6]))
+        arc = 1 + max([int(as_number(n.get("arc"), 1) or 1) for n in existing.values()] or [1])
+        for node in g["nodes"].values():
+            if isinstance(node, dict):
+                node["arc"] = arc
+        merged_nodes = dict(existing)
+        merged_nodes.update(g["nodes"])
+        old_order = [n for n in (old.get("order") or []) if isinstance(n, str)]
+        g["order"] = ([n for n in old_order if n != CAPSTONE_ID]
+                      + [n for n in g["order"] if n not in existing])
+        g["nodes"] = {nid: n for nid, n in merged_nodes.items() if nid != CAPSTONE_ID}
+        # topic identity is stable; the payload may refresh the human title/goal
+        g["title"] = g.get("title") or old.get("title")
+        g["goal"] = g.get("goal") or old.get("goal")
+        args.replace = True          # from here it is the ordinary carry-forward path
+        warnings_extend = ["extended to arc %d (+%d nodes); every existing node kept its "
+                           "schedule" % (arc, len(merged_nodes) - len(existing))]
+    else:
+        warnings_extend = []
     if old is not None and not args.replace:
-        die("topic exists: %s (use --replace to overwrite)" % g["topic"])
+        die("topic exists: %s (use --replace to overwrite, or --extend to add an arc)"
+            % g["topic"])
     old_nodes = old.get("nodes", {}) if isinstance(old, dict) else {}
 
-    warnings = []
+    warnings = list(warnings_extend)
     # dedupe order (keep first occurrence), then append any node missing from it
     seen, order = set(), []
     for nid in g["order"]:
@@ -686,6 +722,7 @@ def cmd_add_topic(args):
         node.setdefault("threshold", False)
         node.setdefault("rubric", [])
         node.setdefault("transfer_probe", None)
+        node.setdefault("arc", 1)       # v1.7: which arc minted this node (absent -> 1)
         # `transfer` is ENGINE-OWNED and derived from receipts (invariant #4: state advances
         # only through receipts). A payload that supplied it would be claiming a capability
         # nobody measured — which is precisely the unearned claim this release exists to end.
@@ -1048,8 +1085,47 @@ def requires_met(g, node, provisional=frozenset(), nodes=None):
             return False
     return True
 
+def frontier_chain(g, nodes, target, receipted):
+    """The `requires` ancestors of `target` that carry no receipt yet — deepest first.
+
+    The engine owns the DAG walk so the tutor never has to (v1.7). This is what makes an
+    ADAPTIVE pretest possible without ever inventing mastery: `/learn` asks a mid-order
+    node, and if the learner has it, these are the exact ancestors worth probing — each of
+    which still earns its own receipt. Nothing here credits anything; it only decides what
+    to ASK. (Constitution art. 10 applies to skipping exactly as it applies to advancing.)"""
+    seen, out, stack = set(), [], [target]
+    while stack:
+        nid = stack.pop()
+        if nid in seen or nid not in nodes:
+            continue
+        seen.add(nid)
+        for req in _requires_of(nodes[nid]):
+            if req in nodes and req not in seen:
+                stack.append(req)
+        if nid != target and nid not in receipted and not is_retired(nodes[nid]):
+            out.append(nid)
+    order = graph_order(g, nodes)
+    pos = {nid: i for i, nid in enumerate(order)}
+    return sorted(out, key=lambda n: -pos.get(n, 0))     # deepest (latest) first
+
 def cmd_next(args):
     g = load_graph(args.topic)
+    if getattr(args, "frontier_of", None):
+        nodes = graph_nodes(g)
+        if args.frontier_of not in nodes:
+            die("unknown node %s in topic %s" % (args.frontier_of, args.topic))
+        receipted = {n for (_t, n) in _by_node(_receipts_for(args.topic))}
+        chain = frontier_chain(g, nodes, args.frontier_of, receipted)
+        emit({"topic": args.topic, "of": args.frontier_of,
+              "unreceipted_requires": chain,
+              "probes": {nid: nodes[nid].get("probe") for nid in chain},
+              "read": ("%d prerequisite%s of %s carry no receipt yet — each still earns its "
+                       "own graded pretest; nothing here credits anything"
+                       % (len(chain), "" if len(chain) == 1 else "s", args.frontier_of))})
+        return
+    _cmd_next_body(g, args)
+
+def _cmd_next_body(g, args):
     nodes = graph_nodes(g)
     stashed = pending_nodes(args.topic)  # already-produced, awaiting the assessor
     for nid in graph_order(g, nodes):
@@ -5458,6 +5534,31 @@ def cmd_doctor(_args):
     info["issues"] = issues
     info["notes"] = notes
     info["ok"] = not issues
+    # v1.7: name the repair, and (only with --fix, only on confirmation) apply it.
+    info["fixes"] = _doctor_fixes(info)
+    if getattr(_args, "fix", False) and info["fixes"]:
+        applied = []
+        for f in info["fixes"]:
+            if f["kind"] != "restore-quarantined":
+                continue            # artifact registration is the smith's command to run
+            src = p("graphs", f["file"].split("/")[-1]) if "/" in f["file"] else p(f["file"])
+            if not os.path.exists(src):
+                continue
+            raw = read_json(src, default=None, quarantine=False)
+            if not isinstance(raw, dict) or not isinstance(raw.get("nodes"), dict):
+                applied.append({"file": f["file"], "restored": False,
+                                "why": "still unparseable or wrong shape — fix it by hand "
+                                       "first; a diagnostic must never restore garbage"})
+                continue
+            dest = src.rsplit(".corrupt.", 1)[0]
+            if os.path.exists(dest):
+                applied.append({"file": f["file"], "restored": False,
+                                "why": "a live file already exists at that path — refusing "
+                                       "to overwrite it"})
+                continue
+            os.rename(src, dest)
+            applied.append({"file": f["file"], "restored": True, "to": dest})
+        info["applied"] = applied
     emit(info)
 
 # ---------------------------------------------------------------- report
@@ -5507,6 +5608,29 @@ tr:last-child td{border-bottom:none}
 footer{margin-top:48px;padding-top:16px;border-top:1px solid var(--line);
 color:var(--muted);font-size:12px}
 """
+
+def _doctor_fixes(d):
+    """Offered repairs for what `doctor` found — the commands, never the execution (v1.7).
+
+    `doctor` has always named the problem and stopped, which is right for a diagnostic and
+    wrong as the end of the road: an unregistered explorable or a quarantined file sits
+    there until a human happens to read a note. These are *offers*: each carries the exact
+    command, and `--fix` applies only what a human confirms, item by item. There is no
+    `--yes`, deliberately — a batch repair of state nobody looked at is how a diagnostic
+    becomes a data-loss bug."""
+    out = []
+    for note in (d.get("notes") or []):
+        if "unregistered artifact file" in note and "artifact set" in note:
+            out.append({"kind": "register-artifact", "detail": note,
+                        "command": note.split("register with: ", 1)[-1].strip()})
+    for issue in (d.get("issues") or []):
+        if "quarantined corrupt files present" in issue:
+            for name in issue.split(":", 1)[-1].split(","):
+                name = name.strip()
+                if name:
+                    out.append({"kind": "restore-quarantined", "detail": issue, "file": name,
+                                "command": "engram.py doctor --fix   # validates JSON first"})
+    return out
 
 def cmd_report(args):
     stats = compute_stats()
@@ -10145,6 +10269,82 @@ def cmd_selftest(_args):
     check("the workload curve trades reviews against retention and recommends nothing",
           fresh(_workload))
 
+    # ══ v1.7 · THE OPEN FRONTIER ═══════════════════════════════════════════════════════
+    #
+    # -- --extend adds an arc and touches NOTHING that already exists --
+    def _extend(h):
+        _add_ab()                                     # a, b (b requires a)
+        for nid in ("a", "b"):
+            _capture(cmd_rate, _ns(topic="t", node=nid, rating="good", kind="encode"))
+        os.environ["ENGRAM_TODAY"] = "2026-07-13"
+        _capture(cmd_rate, _ns(topic="t", node="a", rating="easy"))
+        before = {nid: json.dumps(n, sort_keys=True)
+                  for nid, n in load_graph("t")["nodes"].items() if nid != CAPSTONE_ID}
+        arc2 = {"topic": "t", "title": "T arcs 1-2", "order": ["c"],
+                "nodes": {"c": {"claim": "C", "probe": "pc",
+                                "edges": {"requires": ["b"]}}}}
+        out = _capture_json(cmd_add_topic, _ns(json=json.dumps(arc2), extend=True))
+        g = load_graph("t")
+        after = {nid: json.dumps(n, sort_keys=True)
+                 for nid, n in g["nodes"].items() if nid in before}
+        clashed = False
+        try:
+            _capture(cmd_add_topic, _ns(extend=True, json=json.dumps(
+                {"topic": "t", "title": "x", "order": ["a"],
+                 "nodes": {"a": {"claim": "A2", "probe": "p2"}}})))
+        except SystemExit:
+            clashed = True
+        os.environ["ENGRAM_TODAY"] = "2026-07-06"
+        return (out["ok"] and before == after            # every old node byte-identical
+                and g["nodes"]["c"]["arc"] == 2 and g["nodes"]["a"]["arc"] == 1
+                # the capstone re-mints over the UNION, so the build still requires the lot
+                and sorted(_requires_of(g["nodes"][CAPSTONE_ID])) == ["a", "b", "c"]
+                and clashed)                             # …and an id collision is refused
+    check("--extend adds an arc, preserves every schedule, and refuses a collision",
+          fresh(_extend))
+
+    # -- the frontier walk names what to ASK, and credits nothing --
+    def _frontier(h):
+        g = {"topic": "t", "title": "T", "order": ["a", "b", "c"], "nodes": {
+            "a": {"claim": "A", "probe": "pa"},
+            "b": {"claim": "B", "probe": "pb", "edges": {"requires": ["a"]}},
+            "c": {"claim": "C", "probe": "pc", "edges": {"requires": ["b"]}}}}
+        _capture(cmd_add_topic, _ns(json=json.dumps(g)))
+        deep = _capture_json(cmd_next, _ns(topic="t", frontier_of="c"))
+        _capture(cmd_rate, _ns(topic="t", node="b", rating="good", kind="pretest",
+                               grade="recalled"))
+        _RECEIPTS_CACHE.clear()
+        after = _capture_json(cmd_next, _ns(topic="t", frontier_of="c"))
+        states = {nid: n.get("state") for nid, n in load_graph("t")["nodes"].items()}
+        return (deep["unreceipted_requires"] == ["b", "a"]      # deepest first
+                and after["unreceipted_requires"] == ["a"]      # a receipt removes it
+                and set(deep["probes"]) == {"a", "b"}
+                # ⚠ IT CREDITS NOTHING: asking about the chain must not advance any node
+                and states["a"] == "new" and states["c"] == "new")
+    check("the frontier walk lists what to ASK and advances no node by itself",
+          fresh(_frontier))
+
+    # -- doctor --fix restores only what now parses, and never overwrites a live file --
+    def _doctor_fix(h):
+        _add_ab()
+        with open(p("graphs", "t.json"), "w", encoding="utf-8") as f:
+            f.write("{broken")
+        _capture_json(cmd_topics, _ns())                     # triggers the quarantine
+        d1 = _capture_json(cmd_doctor, _ns())
+        still_broken = _capture_json(cmd_doctor, _ns(fix=True))
+        corrupt = [n for n in os.listdir(p("graphs")) if ".corrupt." in n]
+        write_json(p("graphs", corrupt[0]),
+                   {"topic": "t", "title": "T", "order": ["a"],
+                    "nodes": {"a": {"claim": "A", "probe": "p"}}})
+        fixed = _capture_json(cmd_doctor, _ns(fix=True))
+        return (any(f["kind"] == "restore-quarantined" for f in d1["fixes"])
+                # a diagnostic must NEVER restore garbage
+                and still_broken["applied"][0]["restored"] is False
+                and fixed["applied"][0]["restored"] is True
+                and [t_["topic"] for t_ in _capture_json(cmd_topics, _ns())] == ["t"])
+    check("doctor --fix restores a quarantined file only once it actually parses",
+          fresh(_doctor_fix))
+
     print("\n%d/%d checks passed" % (total[0] - len(failures), total[0]))
     sys.exit(1 if failures else 0)
 
@@ -10163,7 +10363,8 @@ def _ns(**kw):
                     cue=None, horizon=None,
                     canary=False, grader_context=None, audited_rating=None,  # v1.4
                     rater=None, gold=None, contributor=None, allow_unvalidated=False,
-                    relearn=False, attempt=None)   # v1.5
+                    relearn=False, attempt=None,   # v1.5
+                    extend=False, frontier_of=None, fix=False)   # v1.7
     defaults.update(kw)
     for k, v in defaults.items():
         setattr(ns, k, v)
@@ -10185,9 +10386,14 @@ def main():
     ap = argparse.ArgumentParser(prog="engram", description=__doc__)
     sub = ap.add_subparsers(dest="cmd", required=True)
 
-    for name in ("init", "path", "session-start", "topics", "selftest", "stats", "doctor",
+    for name in ("init", "path", "session-start", "topics", "selftest", "stats",
                  "adherence", "retention"):
         sub.add_parser(name)
+
+    sp = sub.add_parser("doctor")
+    sp.add_argument("--fix", action="store_true",
+                    help="apply the repairs doctor names — one at a time, validated first; "
+                         "there is deliberately no --yes")
 
     sp = sub.add_parser("gold")
     sp.add_argument("--canary", action="store_true",
@@ -10242,9 +10448,15 @@ def main():
     sp.add_argument("--clear", action="store_true")
 
     sp = sub.add_parser("add-topic")
+    sp.add_argument("--extend", action="store_true",
+                    help="add an ARC to an existing topic: new nodes only, every existing "
+                         "node and schedule untouched, capstone re-minted over the union")
     sp.add_argument("--json"); sp.add_argument("--file"); sp.add_argument("--replace", action="store_true")
 
     sp = sub.add_parser("next")
+    sp.add_argument("--frontier-of",
+                    help="read-only: the unreceipted `requires` ancestors of this node, "
+                         "deepest first — what an adaptive pretest should ask")
     sp.add_argument("--topic", required=True)
 
     sp = sub.add_parser("topic-status")

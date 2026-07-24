@@ -1,5 +1,49 @@
 # Changelog
 
+## 1.7.0 — 2026-07-24 · The open frontier
+
+The founding question asks for a system where a learner can learn **anything, at any level
+of mastery**. "Anything" has been true since v1.1. "Any level" was false at both ends: an
+expert entering a 20-node topic got a novice's three-node pretest, and a *finished* topic
+dead-ended at its capstone with nowhere to go. (The founder's own graphs are hand-titled
+"Arc 1 of 2" precisely because the second half had no mechanism.)
+
+**`add-topic --extend` — a topic gains an arc instead of ending.** New nodes only; every
+existing node keeps its schedule, receipts and state **byte-for-byte**; new nodes are
+stamped with their `arc`; and the capstone re-mints over the union so the build still
+requires the whole topic. An id collision is **refused**, not silently merged — re-authoring
+a node the learner has receipts for is `--replace`'s job, and confusing the two is how a
+learner loses evidence. `/learn` offers it once when the capstone is done.
+
+**`next --frontier-of <node>` — the adaptive pretest, without inventing mastery.** A learner
+who says "I know the basics" gets asked a mid-arc probe; if they have it, the engine returns
+that node's unreceipted prerequisites, **deepest first**, with their probes. The walk decides
+what to **ask** — it credits nothing, advances nothing, and every node it surfaces still
+earns its own graded receipt. Skipping without evidence is the same unearned claim as
+advancing without evidence, and the constitution does not distinguish them. Bounded at 6
+probes per sitting, resumable, declinable.
+
+**`doctor --fix` — the diagnostic finally finishes the sentence.** `doctor` has always named
+the problem and stopped, so an unregistered explorable or a quarantined file sat there until
+a human happened to read a note. It now emits `fixes` with the exact commands, and `--fix`
+applies them **one at a time, validated first**: a quarantined graph is restored only once it
+actually parses and only if nothing live occupies its path. There is deliberately **no
+`--yes`** — a batch repair of state nobody looked at is how a diagnostic becomes a data-loss
+bug.
+
+**Two-phase authoring** (skills): where the platform can spawn background work, `/learn` asks
+the architect for a first arc of 4–6 nodes plus an outline, starts teaching immediately, and
+lands the rest mid-session with `--extend` — the ~7 minutes of silent terminal that the §5.6
+user session called the most likely first-session abandonment point. The capstone is minted
+only once the full arc is in, never on a half-map. Platforms without background spawning keep
+today's flow and its load-bearing warning line.
+
+### Tests
+
+258 → **261** checks; all six new checks mutation-tested and real on the first pass — the
+first release in this series where none came back fake. Fuzz: **0 crashes / 600 states**.
+
+
 ## 1.6.0 — 2026-07-24 · The fitted learner
 
 "Fits your memory" has been **one coarse interval multiplier** since v0.2, and no real user
