@@ -287,3 +287,5 @@ python3 "$ENGRAM" log-session --kind coach --minutes <est> --notes "<changes mad
 ```
 
 Weekly cadence is nudged by the session-start hook when a check-in is >7 days overdue. If anything looks broken (missing files, weird numbers), run `python3 "$ENGRAM" doctor` and relay its findings.
+
+**`doctor` now names its repairs (v1.7).** Read `fixes`: each carries the exact command. Offer them **one at a time**, arrow-key, and run only what they confirm — `doctor --fix` restores a quarantined file **only if it now parses**, and refuses to overwrite a live file. There is deliberately no `--yes`: a batch repair of state nobody looked at is how a diagnostic becomes a data-loss bug. An unregistered explorable is the smith's `artifact set` command — relay it, don't invent one.
