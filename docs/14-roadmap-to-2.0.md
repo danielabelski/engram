@@ -132,7 +132,13 @@ don't). Their sentence still wins verbatim, whatever they choose.
    slower (piecewise constant is fine; constants documented). The payload carries
    `order` **and** `order_basis: "model-derived (FSRS projection); no human RCT ranks
    backlog orders — docs/13 §2.2"` — the honesty label inside the payload, per doctrine
-   §0.5.
+   §0.5. **⚠ SHIPPED CORRECTION (v1.3):** the claim below that this formula "deprioritizes
+   the nearly-lost (little savable)" is **false as written** — reviewing a near-dead concept
+   *resurrects* it, so the raw ratio ranks it highest. Measured, the curve is an inverted U
+   peaking at R ≈ 0.34 (reproducing Lindsey's θ ≈ 0.33 — a real convergence). The fix is a
+   floor, not a new formula: items below R = 0.10 are flagged `effectively_relearn` and sort
+   last regardless of score. Also amended: `--limit` is **not** a synonym for `--cap` — it
+   keeps the v1.2.2 list shape and order, so an un-updated skill file cannot break.
 2. `/review`: the amnesty protocol's capped set uses `--cap <review cap> --order savings`
    (review caps: `quick` 5, Standard ≈12 — the shipped numbers; Sprint uses `quick`'s);
    "most-overdue first" becomes the explicitly-offered alternative, not the default.
