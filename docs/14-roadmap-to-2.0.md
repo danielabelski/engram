@@ -135,7 +135,8 @@ don't). Their sentence still wins verbatim, whatever they choose.
    §0.5. **⚠ SHIPPED CORRECTION (v1.3):** the claim below that this formula "deprioritizes
    the nearly-lost (little savable)" is **false as written** — reviewing a near-dead concept
    *resurrects* it, so the raw ratio ranks it highest. Measured, the curve is an inverted U
-   peaking at R ≈ 0.34 (reproducing Lindsey's θ ≈ 0.33 — a real convergence). The fix is a
+   whose peak sits at the engine's own `DUE_MINUTES_BY_R` mid-band boundary — a chosen
+   constant, not a derived optimum. The fix is a
    floor, not a new formula: items below R = 0.10 are flagged `effectively_relearn` and sort
    last regardless of score. Also amended: `--limit` is **not** a synonym for `--cap` — it
    keeps the v1.2.2 list shape and order, so an un-updated skill file cannot break.
@@ -950,6 +951,26 @@ press release. If they hold, the README's first sentence may finally change from
 Engram *does* to what it has *demonstrated*; if they don't, the number waits.
 
 ---
+
+## Known and filed — carried into v2.0, not fixed in v1.9.1
+
+- **Tier 2 fits four parameters and claims seventeen.** `_fit_loss` evaluates only
+  `init_stability` (w[0..3]) or a row's recorded `s_before`; the growth functions are never
+  called, so w[4..16] are invisible to the loss and coordinate descent cannot move them. The
+  fit is honest at tier 1 and the `basis` label is corrected, but **the 400-review tier does
+  not yet do more than the 64-review one**. The real fix is a *replay* loss — carry each
+  node's `(first_rating, [(elapsed, rating)…])` sequence and recompute stability forward
+  through `next_stability_recall`/`next_stability_forget` inside the loss — with a check that
+  mutating w[8] changes the loss. Filed rather than rushed: nobody is near 400 usable
+  reviews, and a scheduler fit is not a thing to land in a merge-prep pass.
+- **The agent-parity gate only fires when an agent file changes.** `agents/*.md` and their
+  Codex ports went seven releases without a diff while the *skills* changed the contract
+  underneath them — which is how the v1.4 audit-output break survived to the merge review.
+  The gate should also fire when a skill changes an agent's inputs or outputs.
+- **The dashboard still leads with a streak chip.** The instructions to *narrate* one are
+  gone (v1.9.1), but `stats.streak_days` and its chip predate this series and removing them
+  is a product call, not a merge-prep edit. Either the chip goes or `dialogue-grammar`'s
+  blanket ban gains an explicit carve-out for a descriptive, non-goal day count.
 
 ## The parallel track (any release, any time)
 

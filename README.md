@@ -3,10 +3,10 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-1.9.0-6D4AA8.svg" alt="Version 1.9.0">
+  <img src="https://img.shields.io/badge/version-1.9.1-6D4AA8.svg" alt="Version 1.9.1">
   <a href="https://www.npmjs.com/package/opencode-engram-learning"><img src="https://img.shields.io/npm/v/opencode-engram-learning?label=npm&color=6D4AA8" alt="npm package"></a>
   <img src="https://img.shields.io/badge/license-MIT-yellow.svg" alt="MIT License">
-  <img src="https://img.shields.io/badge/selftest-269%2F269-3E7D5A.svg" alt="269/269 checks">
+  <img src="https://img.shields.io/badge/selftest-279%2F279-3E7D5A.svg" alt="279/279 checks">
   <a href="gold/assessor-gold.jsonl"><img src="https://img.shields.io/badge/grader%20inflations-0%2F258-3E7D5A.svg" alt="0 of 258 blind judgments graded up, on the shipping spec"></a>
   <img src="https://img.shields.io/badge/scheduler-FSRS--4.5-6D4AA8.svg" alt="FSRS-4.5">
   <a href="CONTRIBUTING-DATA.md"><img src="https://img.shields.io/badge/data-100%25%20local-3E7D5A.svg" alt="100% local — the engine has no network code, proven by a permanent selftest"></a>
@@ -209,7 +209,7 @@ So we built the audit and ran it. **Then the gold set failed before the grader d
 
 | | |
 |---|---|
-| **0 of 258** | blind judgments — 86 adversarial items × 3 independent runs — where the grader awarded **more** credit than the strict rubric reading. **Zero, on the spec that ships — and it is a repaired zero, not an untested one.** Extending the set to procedure items ran the audit three times over 774 judgments and caught **3 real inflations**, each traced to an ambiguity in the grader's own instructions (one of them introduced by this release). All three are closed; the number was re-earned, not extrapolated. The full account, including what the fixes cost: [docs/release-audits/v1.1.0-grader-audit.md](docs/release-audits/v1.1.0-grader-audit.md). |
+| **0 of 258** | blind judgments — 86 gold items (86% adversarial) × 3 independent runs — where the grader awarded **more** credit than the strict rubric reading. **Zero, on the spec that ships — and it is a repaired zero, not an untested one.** Extending the set to procedure items ran the audit three times over 774 judgments and caught **3 real inflations**, each traced to an ambiguity in the grader's own instructions (one of them introduced by this release). All three are closed; the number was re-earned, not extrapolated. The full account, including what the fixes cost: [docs/release-audits/v1.1.0-grader-audit.md](docs/release-audits/v1.1.0-grader-audit.md). |
 
 That is a claim about **safety**, and it is the reason the badge above says what it says. A grader that errs low makes you re-drill something you had earned — annoying, and it costs you time. A grader that errs *high* tells you that you know something you do not, and **you stop reviewing.** Only one of those is a trap, and this grader has never walked into it.
 
@@ -338,12 +338,14 @@ The model never does calendar math; this does:
 
 | Command | Purpose |
 |---|---|
+| `add-topic --file F [--replace\|--extend]` | ingest a concept DAG · re-author one · **add an arc** (new nodes only; every existing schedule, receipt and retirement untouched) |
+| `next --topic T [--frontier-of N]` | next frontier concept · **the unreceipted prerequisites of a node**, for an adaptive pretest that credits nothing |
 | `init` / `doctor [--fix]` / `path` | create state · diagnose problems **and name their repairs** · print state location |
 | `topics` / `topic-status --topic T` | list topics · mastery map with progress bar |
 | **`adherence`** | **the binding constraint: of concepts taught and scheduled, how many you came back for** (`loop_closure`) · return cadence · the full funnel |
 | **`retention`** | **the north star: recall at 7 / 30 / 90 days after encoding** — reported with its `unmeasured` denominator (the concepts that came due and were never reviewed; unknown, not absent) |
 | **`decay --topic T`** | what is dying right now, and what N minutes would save — real FSRS numbers, both arms over the same window |
-| **`commit --cue … --action …`** | your if-then plan, in your words. Stored, **shown back at the moment it names** (v1.3 — for three releases it was stored and displayed by nothing), renewable, **never enforced** |
+| **`commit --cue … --action …`** | your if-then plan, in your words. Stored, **shown back at the moment it names** (v1.3 — from v0.6 to v1.2 it was stored and displayed by nothing), renewable, **never enforced** |
 | `next --topic T` / `due` | next frontier concept · due review queue (interleaved) |
 | **`due --cap N`** | a capped session, ranked by **expected retention saved per minute** rather than most-overdue-first — with `order_basis` stating in the payload that it is model-derived (`--limit` keeps the old shape and order) |
 | **`retire --topic T [--node N]`** | take something off your list — out of every queue, **counted in every denominator it leaves**, reversible with `--restore` |
@@ -351,7 +353,7 @@ The model never does calendar math; this does:
 | `stash add\|list\|count\|clear` | crash-safe queue of answers awaiting grading |
 | `model` / `misconception` | open learner model · error catalog |
 | **`propose` / `adaptations`** | at most 3 engine-justified adaptations, each with its evidence and grade (read-only) · the append-only ledger of every change, why, and that it is reversible (Article 12) |
-| **`experiment start\|assign\|status\|settle`** | n-of-1 trials done properly: **randomized** (seeded, reproducible) · **stratified** (kills the material-vs-medium confound) · **pre-registered** · **powered** (15/arm) · and **the engine computes the verdict** — `--verdict` is refused |
+| **`experiment start\|assign\|status\|settle`** | n-of-1 trials done properly: **randomized** (seeded, reproducible) · **stratified** (kills the material-vs-medium confound) · **pre-registered** · **powered** (15/arm; the floor moves with the metric — 8 for transfer, 10 for slip-share) · and **the engine computes the verdict** — `--verdict` is refused |
 | `focus on\|off\|status` | toggle the ADHD Focus profile (Sprint default, growth every review, always-on amnesty) |
 | `visuals eager\|threshold\|off\|status` | the explorables dial: every high-affordance concept · portal concepts only (default) · none |
 | `artifact set\|clear\|list` | register a built explorable on its node (validated; powers regeneration tracking + the medium comparison) |
@@ -365,7 +367,7 @@ The model never does calendar math; this does:
 | **`refit`** | fit the schedule to your measured memory: the interval multiplier (≥50 reviews), then **your own FSRS parameters** — S0 at 64 usable reviews, the full vector at 400, and **a fit that does not beat your current one is refused** |
 | **`export [--topic T]`** | a **text-stripped**, **attributed** receipt bundle written **to a file**. Whitelist-constructed — there is no code path by which a production could leave. **Refuses** if your grader is unaudited |
 | `session-start` / `log-session` | ambient nudge (hook) · session telemetry |
-| `selftest` | 269 checks| 267 checks| 261 checks| 258 checks| 253 checks| 249 checks| 243 checks| 234 checks| 230 checks| 217 checks| 214 checks| 213 checks| 213 checks| 207 checks| 201 checks| 200 checks| 192 checks| 191 checks over the FSRS math, state machine, adherence/retention arithmetic, the grader-audit statistics, and every hardened boundary |
+| `selftest` | 279 checks over the FSRS math, state machine, adherence/retention arithmetic, the grader-audit statistics, and every hardened boundary |
 
 </details>
 
@@ -411,7 +413,7 @@ Separation of powers, enforced by construction: the **tutor** teaches but never 
 | [docs/01-foundations.md](docs/01-foundations.md) | The science: 12 principles in 3 tiers, each with evidence and its design consequence; the neuromyths Engram refuses to build on |
 | [docs/02-prior-art.md](docs/02-prior-art.md) | Literature review: SRS engines, mastery platforms, explorables, ITS research, AI tutors, the Claude Code ecosystem — and the gap |
 | [docs/03-architecture.md](docs/03-architecture.md) | State schemas, the five loops, agent separation of powers, the Explorable Contract, adaptation policy |
-| [docs/04-roadmap.md](docs/04-roadmap.md) | Phased plan with measurable exit criteria, metrics, risks, and the ten-article constitution |
+| [docs/04-roadmap.md](docs/04-roadmap.md) | Phased plan with measurable exit criteria, metrics, risks, and the twelve-article constitution |
 | [docs/05-affective-layers.md](docs/05-affective-layers.md) | The motivation & wisdom layers (v0.4): two new pillars — competence salience and the mentor stance — each evidence-cited and adversarially checked; the ADHD Focus profile; why no gamification |
 | [docs/06-visual-encoding.md](docs/06-visual-encoding.md) | The visual-encoding audit (v0.5): P15 — the guided manipulable; when interactive visuals help (and the boundary conditions that are just as robust); the viz affordance taxonomy, visuals dial, and per-learner medium telemetry; what the audit killed and what stays honestly open |
 | **[docs/07-the-measured-loop.md](docs/07-the-measured-loop.md)** | **The frontier audit:** why "learning rate" is the wrong vector, what actually determines whether you come back, whether an LLM grader can be trusted, and which memory neuroscience is actionable vs. decoration |
@@ -427,7 +429,7 @@ Separation of powers, enforced by construction: the **tutor** teaches but never 
 
 ## More from the same workshop
 
-Five Claude Code plugins from the same workshop. Most share one habit: *let a deterministic core decide, and never let the producer of work grade it.*
+Four Claude Code plugins from the same workshop. Most share one habit: *let a deterministic core decide, and never let the producer of work grade it.*
 
 - **[effortmining](https://github.com/nagisanzenin/effortmining)** — benchmark-calibrated per-subagent reasoning effort: dispatch the cheapest tier a blind grader still accepts. ~64.7% fewer output tokens at equal quality, pre-registered.
 - **[idiolect](https://github.com/nagisanzenin/idiolect)** — human-voice writing engine: 60+ measured voices plus a deterministic AI-tell scanner and a blind auditor, so text reads like a person, not a model.

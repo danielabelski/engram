@@ -18,7 +18,10 @@ for d in "$OPENCODE_PLUGIN_ROOT" "$CLAUDE_PLUGIN_ROOT" "$CODEX_PLUGIN_ROOT" "$EN
          "$PWD" "$(git rev-parse --show-toplevel 2>/dev/null)"; do
   [ -n "$d" ] && [ -f "$d/scripts/engram.py" ] && ENGRAM="$d/scripts/engram.py" && break
 done
-[ -n "$ENGRAM" ] || echo "engram: engine not found — set ENGRAM_ROOT to your engram checkout" >&2
+if [ -z "$ENGRAM" ]; then
+  echo "engram: engine not found — set ENGRAM_ROOT to your engram checkout" >&2
+  return 2 2>/dev/null || exit 2   # FAIL CLOSED: proceeding runs `python3 ""`,
+fi                                  # which dumps a python usage error at the learner
 ```
 
 If none of those are set, resolve the plugin root as the directory containing `.claude-plugin/plugin.json` (or `.codex-plugin/plugin.json`) and point `$ENGRAM` at its `scripts/engram.py`.
@@ -62,7 +65,7 @@ python3 "$ENGRAM" stash count   # productions left ungraded by a previous sessio
 
   A `RELEASE_PROTOCOL` §5.6 user session measured the architect at **~7 minutes of completely silent terminal**. That silence lands *before the learner has seen a single thing this product does well*, and it is the most likely moment a first-time user closes the tab. They will not wait through a blank screen for something they have no reason to trust yet. **Set the expectation, or lose them.**
 
-  Then spawn the **engram-curriculum-architect** agent with: topic, goal, deadline, prior exposure, interests, and any active experiment arm (`python3 "$ENGRAM" experiment assign --topic <t>` — if an experiment is active, its arm constrains teaching strategy and must be recorded in your session notes). Save its JSON: `python3 "$ENGRAM" add-topic --file <tmpfile>`. Show the map (`topic-status` — it renders a progress bar; paste it in a fenced block) and sanity-check scope with one arrow-key question: *looks right / too big / wrong emphasis* → revise via the architect if needed.
+  Then spawn the **engram-curriculum-architect** agent with: topic, goal, deadline, prior exposure, interests, and — if an experiment is active — nothing yet: **arms are assigned per NODE, in step 3**, not per topic here (`experiment assign` requires `--topic` AND `--node`; the topic-level form errors). Save its JSON: `python3 "$ENGRAM" add-topic --file <tmpfile>`. Show the map (`topic-status` — it renders a progress bar; paste it in a fenced block) and sanity-check scope with one arrow-key question: *looks right / too big / wrong emphasis* → revise via the architect if needed.
 
 ## 2 · Pretest the frontier (new topics only)
 
@@ -82,7 +85,7 @@ python3 "$ENGRAM" stash count   # productions left ungraded by a previous sessio
 
 Otherwise (never touched / shaky): take the first **3** nodes of `order` (more feels like an exam, not a diagnostic). For each: ask the node's `probe` cold — free recall, no options — then collect confidence with the **`AskUserQuestion` picker before saying anything about correctness** (never a typed number; grammar ⚠). Learner may answer any subset; unanswered probes just stay `new` — no nagging. Then:
 
-- Solid answer → write their words to a temp file, then `rate --rating easy --kind pretest --grade recalled --confidence <c-or-omit> --production-file <tmpfile>` (schedules it far out; it's known). Never inline their answer into the command — the shell-safety rule applies to pretests too.
+- Solid answer → write their words to a temp file, then `rate --topic <t> --node <id> --rating easy --kind pretest --grade recalled --confidence <c-or-omit> --production-file <tmpfile>` (schedules it far out; it's known). Never inline their answer into the command — the shell-safety rule applies to pretests too.
 - Miss → leave it `new`, and say so without judgment — verbatim spirit: *"Good — a wrong guess before learning measurably improves what sticks next (the pretesting effect). That's now a scheduled destination, not a failure."*
 
 ## 3 · Encode nodes (the heart)
@@ -91,7 +94,10 @@ For each node within the mode budget:
 
 ```bash
 python3 "$ENGRAM" next --topic <topic>
+python3 "$ENGRAM" experiment assign --topic <topic> --node <id>   # if one is active
 ```
+
+`assign` is idempotent and returns the node's `arm` (or `{"arm": null}` when no experiment is running). **An arm never moves under a node**, so calling it again later is safe — and it is the only way to know which arm this node belongs to.
 
 Run the **dialogue grammar** beats 1–8 on the returned node (gap → predict → struggle → resolve → self-explain → connect → verify → close), with a one-line progress marker between nodes (`node 2/3 · residual-stream †`). Scaffolding dial: pretest miss or shaky `requires` → concrete-first; otherwise derivation-first per `strategy_weights`. `arbitrary: true` → mnemonic + retrieval, no derivation theater.
 
@@ -106,6 +112,9 @@ python3 "$ENGRAM" stash add --file <tmpfile.json>
 # tmpfile.json = {"topic":"<t>","node":"<id>","probe":"<probe>",
 #   "production":"<their words, verbatim; note omissions factually>",
 #   "confidence":<n or null>,"claim":"<node claim>","rubric":[...],"kind":"encode"}
+# ⚠ ON THE CAPSTONE, set "kind":"transfer" — §5 says its receipt is a transfer receipt, and
+# nothing else sets it. Left as "encode", `stats.transfer` stays empty forever and the
+# capability claim silently never gets measured.
 # On a procedure node, add "node_kind":"procedure" (and the probe is the fresh
 # instance you served) — it tells the assessor to step-grade and classify errors.
 # The engine mints a `sid` on every stash entry. It MUST survive the round-trip to the
@@ -144,6 +153,12 @@ Then apply and clear:
 ```bash
 python3 "$ENGRAM" receipt --file <assessor-output.json>
 python3 "$ENGRAM" stash clear
+```
+
+**Drain the assessor's `misconceptions` into the store before anything else** — it is a blind second opinion on the learner's actual wrong model, and nothing else writes it:
+
+```bash
+python3 "$ENGRAM" misconception add --topic <t> --node <n> --description "<the assessor's line, verbatim>"
 ```
 
 Relay each `feedback_line` to the learner. On a `recalled` node, the `receipt` output carries `s_before`/`s_after` — if the durability crosses a threshold (milestone, not every node; grammar file Pillar 13), add one flat growth line, never a score. On a `lapsed`/`partial`, use the absolve-not-pity register (grammar oath): normal, owed nothing, here's the path forward. If the learner disputes a grade, send the dispute (their argument + original production) back to the assessor once; log the outcome either way — appeals are calibration data.

@@ -1,5 +1,80 @@
 # Changelog
 
+## 1.9.1 — 2026-07-24 · What the merge gates found
+
+Before merging v1.3–v1.9 to `main`, the two gates that had been skipped across the whole
+series were finally run: **§4.6 the adversarial review** (four reviewers over the 5.7k-line
+diff) and **§5.5 the agent dogfood** (three, on the flows added since v1.3). Between them
+they found **nine HIGH defects**, and the pattern is the one this file keeps recording:
+every mechanical gate was green the entire time.
+
+**The badge could be re-licensed by a grader that never sat the exam.** One `canary-pass`,
+run under *any* model, permanently disabled both staleness triggers — `export` re-opened
+and the dashboard read "grader validated · QWK 1.00" with no failure word anywhere. A canary
+now re-licenses only its **own** grader context, only within the audit's own 90-day window,
+and an **incomplete** canary cannot pass at all. v1.4's central safety claim was
+unenforceable for a release.
+
+**`--extend` orphaned every registered explorable.** A shallow dict comprehension aliased the
+carried-forward nodes, so `node.pop("artifact")` deleted the value from the object the
+carry-forward then read — and the `.bak` was written *after* the mutation, so the backup
+could not recover it. The extend selftest was structurally blind: its fixture had no artifact.
+
+**`retired` was neither stripped nor carried.** A payload could **mint** a retirement
+(emptying the due queue and un-gating the capstone, since a retired prerequisite counts as
+satisfied), and `--replace` **destroyed** a real one — reverting the learner's own decision
+on the graph that is its only record.
+
+**`doctor --fix` renamed files into the live graph path without the lock** — a TOCTOU that
+POSIX `rename` turns into a silently clobbered topic.
+
+**`refit --force` rescaled every interval in the account off one receipt** (the floor guarded
+only the *reported* fit; the multiplier wrote underneath it) and narrated the 1.5× stretch as
+a finding.
+
+**The published npm package omitted `gold/` and `experiments/`** — so for every OpenCode
+user the audit chain was dead, `export` permanently refused, and both v1.9 presets missing.
+The engine's own selftest detected it (260/269 inside the package); nobody had run it there.
+
+**`stats.relearning.first_vs_latest` compared two different populations** and read as a
+paired trend: a fixture whose only twice-looped node got *worse* still printed an
+improvement.
+
+**Tier 2 fits four parameters and claims seventeen** — `_fit_loss` never calls the growth
+functions, so w[4..16] are invisible to it. **Not fixed here**; the fit is honest at tier 1
+and the claim is corrected in the docs. Making tier 2 real needs a replay loss, and is filed
+rather than rushed.
+
+**The assessor's documented audit output could not produce a usable audit receipt.** It was
+told to omit `rating` — which the engine requires — so `audited_rating`/`agree` never
+arrived and `stats.self_grading` sat at zero while audits were being run. `agents/*.md` and
+their Codex ports had not changed in seven releases; the parity gate only fires when an agent
+file changes, so it had never once run.
+
+Plus: `model --set` validated only the root key (a typo wrote a dead field **and** minted a
+`consented` ledger row for a change that never happened); `--kind audit` without
+`--audited-rating`, `--attempt` without `--relearn`, and a negative `--cap` were all accepted
+silently; the fit acceptance passed a 1.5e-8 "improvement"; the 10-anchor calibration gate had
+no minimum count; `--error-class` was accepted on concept and `recalled` items; `--preset`
+silently discarded a caller's own design.
+
+**And two things this release says out loud rather than fixing quietly.** The v1.3 entry
+claimed the savings curve's peak "independently reproduces" Lindsey's θ ≈ 0.33 — it does not;
+the peak sits at a `DUE_MINUTES_BY_R` boundary **this repo chose**, and calling a calibration
+coincidence a convergence is exactly the circularity the README warns about for its own gold
+set. And the **streak contradiction**: three files banned streak counts while two ordered the
+narrator to say one. The instructions to say it are gone.
+
+`scripts/fuzz.py` ships, because the CHANGELOG has been quoting its numbers as measurements
+while it lived only on one machine.
+
+### Tests
+
+274 → **279** checks; every fix mutation-tested, three fixtures rewritten after coming back
+fake. Fuzz 0/600 + 0/300 on the audit paths. vitest 165/165. **And the package now passes
+its own selftest** (279/279 staged from `files`), which is how the missing `gold/` was caught.
+
+
 ## 1.9.0 — 2026-07-24 · The sharper question
 
 The n-of-1 machinery has been randomized, stratified, pre-registered and powered since
@@ -441,10 +516,12 @@ engine gets byte-identical behavior. Uncapped queues are unchanged.
 > built to make the two orders diverge is the only reason we know.** `docs/14` asserted that
 > savings-per-minute "deprioritizes the nearly-lost (little savable)". It does not: reviewing
 > a near-dead concept *resurrects* it, so the raw metric ranks it highest. Sweeping stability
-> shows the curve is an inverted U peaking at **R ≈ 0.34** — which independently reproduces
-> the **θ ≈ 0.33** threshold policy the Lindsey (2014) classroom RCT actually deployed, an
-> FSRS knapsack and a human experiment arriving at the same target from opposite directions.
-> The peak is kept; the left tail is **parked**: items below R = 0.10 are flagged
+> shows the curve is an inverted U whose peak sits at the mid-band boundary of
+> `DUE_MINUTES_BY_R` — **a constant this repo chose**, not a derived optimum: move the
+> breakpoint and the peak moves with it. An earlier draft of this entry called that an
+> independent reproduction of Lindsey's θ ≈ 0.33 threshold, which is precisely the
+> circularity the README calls out for its own gold set. It is a coincidence of calibration
+> and it is written down as one. The peak is kept; the left tail is **parked**: items below R = 0.10 are flagged
 > `effectively_relearn` and sort last whatever their raw score, because a one-shot 30-day
 > knapsack cannot see that a resurrection buys several more reviews of future budget, and
 > every budgeted analysis in the record says do not serve the hopeless first. Docs 13/14/15

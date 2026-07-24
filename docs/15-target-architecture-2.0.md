@@ -62,7 +62,7 @@ change ships a selftest that fails without it.
     "desired_retention": 0.90,
     "interval_multiplier": 1.0,          // RESET to 1.0 by the v1.6 migration (§5.2)
     "last_refit": null,
-    "fsrs_params": null,                 // v1.6 tier-2 fit writes {w: [...21], basis: "<label per inv.14>"}
+    "fsrs_params": null,                 // v1.6 tier-2 fit writes {w: [...17], basis: "<label per inv.14>"}
     "fsrs_version": "4.5"                // v1.6: "6" after migration; readers refuse unknown values
   },
   "challenge_band": { "target_success": 0.85, "hint_budget": 2 },   // unchanged; still static (13 §2.7 rank 5)
@@ -200,7 +200,7 @@ discipline: derived fields are never ingested).
     "partial":  {"n": 25, "exact": 0.90, "bias": -0.04},   // the row that matters (13 §2.4)
     "lapsed":   {"n": 27, "exact": 0.98, "bias": -0.01}
   },
-  "spec_flip_rate": null,                     // v1.4-E: set only by `/coach audit deep`;
+  "spec_flip_rate": null,   // ⚠ NOT SHIPPED in v1.4 (deferred — no gold/spec-paraphrases/)                     // v1.4-E: set only by `/coach audit deep`;
                                               //   fraction of canary items whose grade changed
                                               //   across spec paraphrases; ≥0.10 → verdict "warn"
   "verdict": "pass|warn|fail|incomplete|insufficient-runs|canary-pass|canary-fail"
@@ -279,7 +279,8 @@ rule: counts below the floor, rates at or above it, `min_n` published beside eve
    a break the doctrine forbids for a benefit nobody needed.
 2. **The savings ranking needs a floor, because the raw metric ranks the hopeless first.**
    Measured: savings/min is an inverted U peaking at R ≈ 0.34 (which reproduces the Lindsey
-   θ ≈ 0.33 policy — a real convergence), but reviewing a near-dead concept *resurrects* it,
+   `DUE_MINUTES_BY_R` mid-band boundary — a chosen constant, not a derived optimum), but
+   reviewing a near-dead concept *resurrects* it,
    so the left tail scores high. Items below `DUE_RELEARN_R` (0.10) are flagged
    `effectively_relearn` and **sort last regardless of score**. docs/14 v1.3-C's prose claimed
    the plain formula did this; it did not.
@@ -296,7 +297,7 @@ rule: counts below the floor, rates at or above it, `min_n` published beside eve
     "savings_per_min": 0.041,            // (R_horizon_if_reviewed − R_horizon_no_review) / expected_minutes
     "expected_minutes": 1.4,             // piecewise by R: R≥0.7→0.6 · 0.3≤R<0.7→1.0 · R<0.3→2.0
                                           //   (constants documented here, labeled engineering)
-    "schedule_policy": "relearning-dose (policy over FSRS; docs/13 §2.5 — SR × adaptive scheduling is unstudied)"
+    "schedule_policy": "relearning-dose (policy over FSRS; docs/13 §2.5 — SR × adaptive scheduling is unstudied)"   // ⚠ SHIPPED AS `dose_capped` (a bare bool on the RECEIPT). Invariant 14 wants the label on the due payload; see v1.9.1.
                                           //   present only on nodes whose interval the v1.5 cap shortened
   }]
 }
@@ -323,7 +324,7 @@ burning the cap.
 | `adjudication-stats --file F` | new | 1.4 | no |
 | `refit` | tier ladder (0: multiplier ≥50 · 1: S0 ≥64 · 2: full ≥400 + refuse-if-not-better); `basis` labels | 1.6 | yes (lock) |
 | `report` | workload-vs-retention section | 1.6 | artifacts/ |
-| *(migration)* `doctor --migrate-scheduler` | FSRS-6 replay, idempotent, `ENGRAM_FSRS=4.5` bypass | 1.6 | yes (lock) |
+| ~~`doctor --migrate-scheduler`~~ | **not shipped** — see §5.2 | 1.6 | — |
 | `add-topic --extend --file F` | merge-only mode; `capstone-<arc>` mint | 1.7 [RE-ANCHOR] | yes (lock) |
 | `next --frontier-of NODE` | read-only requires-chain helper | 1.7 [RE-ANCHOR] | no |
 | `doctor --fix` | per-item confirmed repairs; `--yes` refused | 1.7 [RE-ANCHOR] | yes (lock) |
@@ -390,7 +391,16 @@ One shared `is_retired(node)` predicate gates every node-level population
 | `settings.srl` | pre-1.8 | `"on"` |
 | `rhythms` | — | v1.8 heal **removes** the key |
 
-### 5.2 The v1.6 scheduler replay **[BINDING]**
+### 5.2 The v1.6 scheduler replay — **NOT SHIPPED (superseded by docs/14 v1.6's RESULT)**
+
+> ⚠ v1.6 deliberately did not ship the FSRS-6 migration: fitted 4.5 matches or beats default
+> 6/7 on the benchmark, our users run near-defaults, and the 21 weights would need
+> primary-source verification before entering a scheduler that governs other people's
+> memories. `migrate-scheduler`, `fsrs_version` and `ENGRAM_FSRS` do **not** exist in the
+> engine. The procedure below is retained as the design to follow **if** that decision is
+> ever revisited — it is not a description of the shipped system.
+
+#### (retained design)
 
 Trigger: explicit (`doctor --migrate-scheduler`, offered once by `/coach`), never
 silent. Procedure: for every non-retired node, recompute s/d by replaying its receipts

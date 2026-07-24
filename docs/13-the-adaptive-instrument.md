@@ -200,9 +200,11 @@ minute** — the exact quantity `decay` already computes per node, divided by an
 time cost that prices failures as slower (Eglington & Pavlik's point) — **with an explicit
 floor under the hopeless**. *(Corrected in the v1.3 build, and the correction is the
 interesting part: the raw ratio does NOT deprioritize the nearly-lost, because reviewing a
-near-dead concept resurrects it. Measured, the curve is an inverted U peaking at R ≈ 0.34 —
-independently reproducing the **θ ≈ 0.33** threshold the Lindsey classroom RCT deployed,
-which is the strongest cross-validation available for any of this. The peak is kept; items
+near-dead concept resurrects it. Measured, the curve is an inverted U whose peak sits at the
+mid-band boundary of the engine's own `DUE_MINUTES_BY_R` constants — **not a derived
+optimum**. An earlier draft called this an independent reproduction of Lindsey's
+θ ≈ 0.33; it is a coincidence of calibration, and claiming otherwise would be the
+circularity this document spends a section warning about. The peak is kept; items
 below R = 0.10 are parked as `effectively_relearn`, since a one-shot horizon knapsack cannot
 see that a resurrection consumes several more reviews of future budget.)* The ranking
 therefore deprioritizes both the nearly-lost (parked explicitly, un-guilted, or retired) and

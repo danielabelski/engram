@@ -16,7 +16,10 @@ for d in "$OPENCODE_PLUGIN_ROOT" "$CLAUDE_PLUGIN_ROOT" "$CODEX_PLUGIN_ROOT" "$EN
          "$PWD" "$(git rev-parse --show-toplevel 2>/dev/null)"; do
   [ -n "$d" ] && [ -f "$d/scripts/engram.py" ] && ENGRAM="$d/scripts/engram.py" && break
 done
-[ -n "$ENGRAM" ] || echo "engram: engine not found — set ENGRAM_ROOT to your engram checkout" >&2
+if [ -z "$ENGRAM" ]; then
+  echo "engram: engine not found — set ENGRAM_ROOT to your engram checkout" >&2
+  return 2 2>/dev/null || exit 2   # FAIL CLOSED: proceeding runs `python3 ""`,
+fi                                  # which dumps a python usage error at the learner
 ```
 
 If none are set, resolve the plugin root as the directory containing `.claude-plugin/plugin.json` (or `.codex-plugin/plugin.json`). **Never inline a learner's answer into a shell command** — pass productions via `--production-file` (or `--production-file -` on stdin); a stray quote or `$(…)` in what they typed would otherwise execute.
@@ -36,7 +39,7 @@ If stash > 0, settle it first (assessor → `receipt` → `stash clear`, per /le
 **`--cap` picks WHICH items, and it is not the order Engram used to serve (v1.3).** A capped session is a triage decision: with `--cap` the engine ranks by *expected 30-day retention saved per expected minute* and returns `{order, order_basis, items}` (the older `--limit` still returns a bare list in the old most-overdue-first order). Two things to carry into the session, both already in the payload:
 
 - **Say nothing about the ordering unless asked** — it is plumbing, not a lesson. If asked, the honest line is in `order_basis`: it is *model-derived* (an FSRS projection), backed by one strong human RCT for the policy family and by simulations, and **no human RCT has ever ranked backlog orders**. Never present it as proven.
-- **Never quote `expected_minutes` as a session estimate.** It is a ranking weight (a cold item is priced as slower), and it disagrees with the ~0.6 min/item the hook and `decay` use *on purpose*. When you need to say how long something takes, use `decay`'s `minutes` or the hook's — one figure to the learner, always.
+- **Never quote `expected_minutes` as a session estimate.** It is a ranking weight (a cold item is priced as slower), and it disagrees with the ~0.6 min/item the hook and `decay` use *on purpose*. When you need to say how long something takes, use `decay`'s `minutes` or the hook's — one figure to the learner, always. (Those two are the same estimate; `expected_minutes` is a per-item weight whose best-case rung happens to be 0.6.)
 - **Items flagged `effectively_relearn: true` are functionally re-learns, not reviews.** They sort last on purpose and they lose almost nothing more by waiting. Name them once at the close rather than burning the cap on them: *"three of these are past the point of a quick review — they'd want a re-derivation. Want them in a longer session, or shall I retire any?"*
 
 **Return-after-absence (the amnesty protocol — the highest-evidence Layer 2 move; `docs/05-affective-layers.md` P14).** Fires when `due > 2× the mode cap`, **or** when `adherence.return.days_since_last_session ≥ 7` (the engine's own constant — the same one the hook's amnesty and decay lines use; don't invent a different threshold), **or** when the loop has never closed. Then do **not** dump the debt.
@@ -48,13 +51,13 @@ If stash > 0, settle it first (assessor → `receipt` → `stash clear`, per /le
 - Then run only the chosen cap (`due --cap <n>`). What's left stays due and un-guilted. Zero shame in either the offer or the close.
 - **`retire` belongs in this conversation, and only here** (v1.3): when the queue is genuinely stale — a topic they've moved on from, a node that no longer matters — offer it plainly: *"anything here you'd rather take off the list? `retire` keeps it in your history, out of your queue."* Then `python3 "$ENGRAM" retire --topic <t> [--node <n>]` (reversible: `--restore`). **You never name which nodes to retire.** Auto-suggesting the ones they keep failing is a flattering denominator wearing a helpful face; the learner decides, the engine records and counts (retired items stay visible in `adherence` and `retention.unmeasured`).
 
-**The honest number, exactly once (v0.6).** Amnesty removes the guilt; it must not also remove the *stakes*. After the amnesty line and **before** the arrow-key offer, read the engine and state what the decay actually costs — one line, then move on:
+**The honest number — but only if the hook has not already said it (v0.6).** Amnesty removes the guilt; it must not also remove the *stakes*. After the amnesty line and **before** the arrow-key offer, read the engine and state what the decay actually costs — one line, then move on:
 
 ```bash
 python3 "$ENGRAM" decay --topic <t>     # or bare, for everything
 ```
 
-Its `read` field is already written for a human. Say it flatly, in the register of a lab notebook reporting a result: *"Those seven are at ~70% and still falling — four minutes today is the difference between keeping them and re-learning them."*
+Its `read` field is already written for a human. Say it flatly, in the register of a lab notebook reporting a result — **and in your own words, not the hook's**, since `session-start` prints that exact sentence on the same trigger: *"Seven of these have drifted to about 70%; a few minutes now is the difference between keeping them and re-learning them."* If the hook already said it, **say nothing** and go straight to the offer.
 
 The rules that keep this from becoming the thing this project despises:
 - **Information, never pressure** (`docs/05` P13; Deci/Koestner/Ryan 1999: controlling praise nets **d = −0.78** on adult motivation). It reports a forgetting curve because that is what the curve says. **No "should." No scold. No "don't lose your progress!"**
@@ -87,7 +90,7 @@ python3 "$ENGRAM" rate --topic <t> --node <n> --rating <r> --confidence <c-or-om
 
 Relay the returned due date in passing, not ceremonially ("back in 12 days"). **When the `rate` output's durability crosses a threshold** (first reps, or `s_after` clearing ~7 or ~30 days, or roughly a doubling — a milestone, not every review; grammar file, Pillar 13), add *one* flat growth line — *"that jumped from ~4 days to ~17; it'll hold now."* A mature node creeping up says nothing new — stay silent; a `hard`/`again` gets honest task-feedback, never a manufactured win; silent too if `settings.momentum` = `off`.
 
-**If the item comes back `lapsed` (concept/fact): do not move on.** Run the criterion loop in the dialogue grammar — grade it, re-derive, put another item in between, then re-ask, up to 3 passes, stopping at one clean recall. Rate re-attempts with `--relearn --attempt <n>`; they record the loop and change no schedule. The mode budget still outranks the criterion.
+**If the item comes back `lapsed` — or `partial` with the node's central claim absent (concept/fact): do not move on.** Run the criterion loop in the dialogue grammar — grade it, re-derive, put another item in between, then re-ask, up to 3 passes, stopping at one clean recall. Rate re-attempts with `--relearn --attempt <n>`; they record the loop and change no schedule. The mode budget still outranks the criterion.
 
 **Special cases:**
 
@@ -136,4 +139,4 @@ python3 "$ENGRAM" log-session --kind review --mode <mode> --minutes <est> --item
 python3 "$ENGRAM" stats
 ```
 
-Close with the **receipt strip**: items → outcomes, streak, one meaningful number (e.g., month-bucket recall rate), next due date. Prefer a **momentum** number from `stats.momentum` as that meaningful number when there was real growth — *"+31 days of durability added this week"* or *"most durable now: residual-stream, 42 days"* — informational, never a score (Pillar 13). If the queue was large and they stopped early — fine, say what's left, zero guilt. The two-minute floor exists to protect the habit, not to grow the session.
+Close with the **receipt strip**: items → outcomes, one meaningful number (e.g., month-bucket recall rate), next due date. **No streak count** — the grammar this file declares binding bans them outright (Pillar 13: *"no XP, points, badges, levels, or streak counts"*), and its own worked example of the strip has none. A day-count in the close ritual is streak-as-goal with better manners. Prefer a **momentum** number from `stats.momentum` as that meaningful number when there was real growth — *"+31 days of durability added this week"* or *"most durable now: residual-stream, 42 days"* — informational, never a score (Pillar 13). If the queue was large and they stopped early — fine, say what's left, zero guilt. The two-minute floor exists to protect the habit, not to grow the session.
