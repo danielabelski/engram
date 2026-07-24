@@ -1,5 +1,100 @@
 # Changelog
 
+## 1.3.0 — 2026-07-24 · The kept word
+
+The first release on the road to 2.0 (`docs/14`), and it is the return release: the
+binding constraint has been adherence since `docs/08` was written, and three of the four
+things this ships were *already in the schema, computed by nothing*.
+
+**The commitment is finally shown back.** `commit` has written the learner's if-then plan
+since v0.6 and **no surface has ever displayed it** — the `transfer_probe` defect, repeated
+on the strongest licensed adherence lever in the repo. What the direct RCTs actually tested
+is the *read-back* (Messmer 2022; Prestwich 2010), not the storing. The session hook now
+prints it, and `/review`'s amnesty block shows it once on return, in the learner's own words
+— rationed by exactly the decay line's return-event rule (never-closed loop, or a real
+absence), because a sentence you wrote becomes nagging the moment it greets you daily.
+Their text is printed as an inert quoted literal: hook output is injected into an agent's
+context, so a commitment reading *"ignore previous instructions"* must arrive as text.
+`commit` also stamps renewals and emits `age_days`, which is what drives the keep/rephrase/
+drop offer at a seam (the ~28-day cadence is labeled inference, not evidence).
+
+**The capped session stops serving the worst-ranked order.** `due --cap N` ranks by
+expected 30-day retention saved per expected minute; `--limit` is untouched and still emits
+the bare list in the old most-overdue-first order, so an older skill file against a newer
+engine gets byte-identical behavior. Uncapped queues are unchanged.
+
+> **The roadmap's own formula did the opposite of what its prose claimed, and the fixture
+> built to make the two orders diverge is the only reason we know.** `docs/14` asserted that
+> savings-per-minute "deprioritizes the nearly-lost (little savable)". It does not: reviewing
+> a near-dead concept *resurrects* it, so the raw metric ranks it highest. Sweeping stability
+> shows the curve is an inverted U peaking at **R ≈ 0.34** — which independently reproduces
+> the **θ ≈ 0.33** threshold policy the Lindsey (2014) classroom RCT actually deployed, an
+> FSRS knapsack and a human experiment arriving at the same target from opposite directions.
+> The peak is kept; the left tail is **parked**: items below R = 0.10 are flagged
+> `effectively_relearn` and sort last whatever their raw score, because a one-shot 30-day
+> knapsack cannot see that a resurrection buys several more reviews of future budget, and
+> every budgeted analysis in the record says do not serve the hopeless first. Docs 13/14/15
+> are corrected rather than quietly reconciled.
+
+**`retire` — the autonomy verb Engram never had.** Take something off your list: out of
+`due`, `next`, `decay`, transfer candidates and the frontier; **counted in every denominator
+it leaves** (`adherence.loop_closure.retired_excluded`, `retention.unmeasured.retired`,
+`funnel.nodes_retired`, and a line on the dashboard). It is deliberately *not* a `state`
+value — a fourth state would ripple through every state reader, and the capstone requires
+every node, so retirement would have blocked the build forever. Instead: an engine-owned
+block plus one shared `is_retired` predicate, and a **retired prerequisite counts as
+satisfied**, so retiring something opens the frontier rather than sealing the topic.
+**The engine never proposes retiring a specific node** — auto-retiring whatever a learner
+keeps failing is a flattering denominator wearing a helpful face.
+
+**The hook now opens with amnesty — and the reason it does is the most useful thing this
+release found.** The first cut of the plan line printed it *after* the decay cost, so the
+ambient surface read: **count → what it's costing you → your own unkept promise**, with no
+amnesty anywhere, fired automatically before `/review` is typed. Every engine gate was green.
+The §5.5 dogfood — an uncontaminated agent handed only the skill file and a seeded state —
+read that sequence cold and named it: *"cost-of-decay followed by their own unkept promise,
+with no amnesty before it, at the exact moment the protocol says the learner is most likely
+to churn. Read cold, that pair is a debt collector, and it ships enabled by default."*
+`/review`'s protocol has always guaranteed *nothing owed → what it costs → a path*, and the
+skill **cannot repair an ordering violation that happens before it runs**. So the guarantee
+now lives in the hook: amnesty first (dated when session history allows), then their plan,
+then the cost. The ordering is pinned by a selftest, because a check that merely asserts the
+lines exist cannot see the defect.
+
+**The hook stops presenting the wall.** Above `2 × the review cap` (or on the Focus
+profile), the ambient line leads with a path that fits and still states the full count:
+*"28 reviews due · /review quick clears the 5 most urgent (~3 min) · full queue ~17 min."*
+The amnesty protocol existed only inside `/review`; the line that reached the learner first
+was the wall it was written to prevent.
+
+Also: `/coach` offers the grader audit **once**, when there are ≥20 receipts and it would
+change something (the founder's own machine has 42 receipts and every number stamped
+unearned); `/learn` may suggest — once, declinably — anchoring a clock-time cue to an
+existing routine (event cues build habits, time cues measurably don't); `/review` carries
+one honest line about automaticity taking ~2 months with a huge range, and **no day count,
+ever** — the constant does not exist and a countdown is a streak with better manners.
+
+### Numbers audit (§4.8)
+
+`savings_per_min` fails **pessimistically** (a mis-ranked item is still a due item, and the
+cap is a floor not a target); its denominator is *expected minutes*, published per item
+beside it; `order_basis` ships inside the payload. `retired_excluded` is the one number here
+that could flatter — a learner who retires everything unreviewed drives `loop_closure` up —
+so the count travels with the rate, reaches the `read` string, and `/coach` is instructed to
+voice it. `retired` is reported **beside** `states`, never inside it: the three state counts
+still sum to the node total, because two populations may not share a container (bug class
+#7). Cross-consistency verified live on one state: `retention.unmeasured.projected_recall_now`,
+`decay.now.mean_recall_due` and every `due --cap` item's `r_now` agree to the digit (0.49).
+
+### Tests
+
+234 → **243** checks; every new check mutation-tested (each fails when, and only when, its
+own fix is reverted). **Two mutations came back FAKE and were rewritten** — one asserted the
+amnesty existed without ever reaching the branch that dates it, which is §4.5's "the fixture
+returns before execution reaches the code under test", exactly as the protocol predicts. Fuzz re-run after the last commit:
+**0 crashes / 600 states / 19,800 read calls** with `retired` randomized to every JSON type.
+
+
 ## 1.2.2 — 2026-07-22 · closing the review's MED/LOW tail, and one the fuzz found
 
 v1.2.1 fixed the two HIGH defects and left four smaller findings open. Three were real on

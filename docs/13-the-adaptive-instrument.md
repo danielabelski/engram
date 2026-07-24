@@ -197,8 +197,15 @@ community heuristic · INF = inference):
 **Design consequence (the honest composite, labeled as such):** for capped sessions and
 amnesty catch-ups, rank due items by **expected 30-day retention saved per expected
 minute** — the exact quantity `decay` already computes per node, divided by an expected
-time cost that prices failures as slower (Eglington & Pavlik's point). This deprioritizes
-both the nearly-lost (little savable — they park explicitly, un-guilted, or retire) and
+time cost that prices failures as slower (Eglington & Pavlik's point) — **with an explicit
+floor under the hopeless**. *(Corrected in the v1.3 build, and the correction is the
+interesting part: the raw ratio does NOT deprioritize the nearly-lost, because reviewing a
+near-dead concept resurrects it. Measured, the curve is an inverted U peaking at R ≈ 0.34 —
+independently reproducing the **θ ≈ 0.33** threshold the Lindsey classroom RCT deployed,
+which is the strongest cross-validation available for any of this. The peak is kept; items
+below R = 0.10 are parked as `effectively_relearn`, since a one-shot horizon knapsack cannot
+see that a resurrection consumes several more reviews of future budget.)* The ranking
+therefore deprioritizes both the nearly-lost (parked explicitly, un-guilted, or retired) and
 the barely-due (little at stake). The formula is a synthesis [INF] inside an evidenced
 family [HE+SIM]; the engine must label it model-derived, and most-overdue-first should
 survive only as a user-selectable completeness option. **This is a rare case of the

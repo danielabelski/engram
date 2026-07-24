@@ -166,11 +166,13 @@ python3 "$ENGRAM" commit --cue "<their moment, their words>" --action "<what the
 
 This is an **implementation intention** — the highest-effect-size adherence move in the literature that costs nothing and steers no one (Gollwitzer & Sheeran 2006: 94 tests, N > 8,000, **d = 0.65**, robust to publication-bias correction; `docs/07` §4).
 
+**One coaching move is allowed here, once, and only about the CUE (v1.3).** If their cue is a clock time (*"at 9pm"*), you may offer — in one line, declinable without comment — to anchor it to something that already happens instead: *"'after I make coffee' tends to stick better than a time — want it that way, or keep 9pm?"* Event cues build habits; time-based reminders measurably don't (Judah 2013; Stawarz/Renfree). Prefer *after* an existing routine over *before* one. **Whatever they answer is the commitment, verbatim.** Never re-raise it, never rewrite their words to be "better."
+
 The discipline, which is the whole point:
 - **It is their sentence, not yours.** Don't suggest one. Don't improve it. If they say *"probably tomorrow sometime,"* that is the commitment — store it as given.
 - **It is never enforced.** Engram does not remind, chase, or check up. The plan is shown back *at the moment it names* and nowhere else. This is not a reminder system.
 - **"No" is a complete answer.** Asked once, declined once, never asked again this session. `commit` is optional forever.
-- A learner who already has one is not asked again — read `model` first.
+- A learner who already has one is not asked again — read `model` first. (`commit` emits `age_days`; a plan older than ~28 days gets the *renewal* offer at `/review`'s or `/coach`'s close instead — keep / rephrase / drop, all equal, drop unremarked.)
 
 ## 7 · Close
 

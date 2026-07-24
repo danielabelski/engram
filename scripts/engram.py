@@ -32,7 +32,7 @@ SCHEMA = 1
 # The one place the engine knows its own version. Read by `export`, so a shared receipt states
 # which engine produced it — a corpus of receipts from unknown engine versions is not a corpus.
 # Pinned against .claude-plugin/plugin.json by a selftest, so it cannot drift.
-ENGRAM_VERSION = "1.2.2"
+ENGRAM_VERSION = "1.3.0"
 RETENTION_DEFAULT = 0.90
 INTERVAL_MAX = 365
 RETENTION_MIN, RETENTION_MAX = 0.70, 0.97   # sane desired-retention bounds
@@ -815,19 +815,31 @@ def state_counts(g):
         counts[st] = counts.get(st, 0) + 1
     return counts
 
+def retired_count(g):
+    """Retired nodes in this graph — reported BESIDE `states`, never inside it (v1.3).
+
+    Retirement is not a state (docs/15 §2.2), and a `retired` key sitting among three
+    mutually-exclusive states that sum to the node count is bug class #7: the arithmetic is
+    right and the reader is deceived. Two different populations never share a container."""
+    nodes = g.get("nodes")
+    if not isinstance(nodes, dict):
+        return 0
+    return sum(1 for n in nodes.values() if is_retired(n))
+
 def cmd_topics(_args):
     out = []
     for t, g in iter_graphs():
         states = state_counts(g)
         due_count = 0
         for node in (g.get("nodes") or {}).values():
-            if not isinstance(node, dict):
-                continue
+            if not isinstance(node, dict) or is_retired(node):
+                continue                    # retired: off the queue, counted in `states`
             dd = safe_date(_fsrs_of(node).get("due"))
             if node.get("state") != "new" and dd and dd <= today():
                 due_count += 1
         out.append({"topic": t, "title": g.get("title"), "goal": g.get("goal"),
-                    "nodes": len(g["nodes"]), "states": states, "due": due_count})
+                    "nodes": len(g["nodes"]), "states": states, "due": due_count,
+                    "retired": retired_count(g)})
     emit(out)
 
 def pending_nodes(topic):
@@ -868,6 +880,104 @@ def node_kind_of(node):
         return "fact"
     return "concept"
 
+# Review-session caps, mirroring skills/review §1 — the engine needs them to size the ambient
+# offer, and two copies of a number is how they drift.
+RETURN_ABSENCE_DAYS = 7   # what counts as "coming back" — ONE constant, shared by
+                          # the hook's amnesty, the decay line, and the skills
+QUICK_CAP = 5             # `/review quick`, and the Sprint/Focus default
+STANDARD_CAP = 12         # the Standard-mode review cap
+
+DUE_ORDERS = ("overdue", "savings")
+DUE_HORIZON = 30          # the savings horizon, in days — matches DECAY_HORIZON_DEFAULT
+# Expected minutes per item, by current retrievability. A near-forgotten item is not just
+# low-value to review, it is SLOW: the learner re-derives it from nothing. Failures cost
+# time, and the budget being spent is time, not items (Eglington & Pavlik 2020 — practicing
+# at high predicted success beat both hardest-first and easiest-first on retention per unit
+# time). These three constants are ENGINEERING, not measurement, and the payload says so.
+DUE_MINUTES_BY_R = ((0.70, 0.6), (0.30, 1.0), (0.0, 2.0))
+DUE_RELEARN_R = 0.10      # below this, the item is functionally a re-learn, not a review
+
+def _expected_minutes(r_now):
+    for floor, minutes in DUE_MINUTES_BY_R:
+        if r_now >= floor:
+            return minutes
+    return DUE_MINUTES_BY_R[-1][1]
+
+def _node_savings(fsrs, t, horizon, retention, im):
+    """What reviewing THIS node today buys over `horizon` days, per expected minute.
+
+    Uses exactly the primitives `decay` uses, in the same order, on the same inputs — so the
+    two commands can never disagree about the same node (RELEASE_PROTOCOL §4.8 Q1: the
+    engine's own commands must agree with each other, and a selftest pins it).
+
+    MODEL-DERIVED, and every payload carrying it says so: one strong human RCT backs the
+    POLICY FAMILY (model-predicted-recall-driven selection under an equal budget — Lindsey
+    et al. 2014, +16.5% at 28 days, d = 1.42), and simulations back descending-retrievability
+    for backlogs, but no human RCT has ever ranked backlog orders. Returns None when the node
+    has never been encoded — nothing to save yet.
+
+    ⚠ THE SHAPE OF THIS CURVE, measured rather than assumed (and it is the reason the
+    `effectively_relearn` floor exists rather than being decoration). Sweeping stability at a
+    fixed horizon, savings/min is an INVERTED U that peaks around R ≈ 0.34:
+
+        R=0.073 -> 0.413   R=0.338 -> 0.659   R=0.753 -> 0.556   R=0.918 -> 0.230
+
+    That peak independently reproduces the θ ≈ 0.33 threshold policy the Lindsey classroom
+    deployment actually used — an FSRS knapsack and a human RCT arriving at the same target
+    from different directions, which is the strongest thing that can be said for any of this.
+    **But the left tail lies:** a near-dead concept scores high because reviewing it
+    *resurrects* it, and a one-shot 30-day knapsack cannot see that a resurrection buys
+    several more reviews of future budget. Every budgeted analysis in the record says do not
+    serve the hopeless first. So items below `DUE_RELEARN_R` are PARKED (sorted last, flagged)
+    rather than allowed to win the cap — the ranking keeps the peak and drops the tail."""
+    s, last = as_number(fsrs.get("s")), safe_date(fsrs.get("last"))
+    if s is None or last is None:
+        return None
+    elapsed = max(0, (t - last).days)
+    r_now = retrievability(elapsed, s)
+    r_no_review = retrievability(elapsed + horizon, s)
+    after, _ = apply_rating(dict(fsrs, retention=retention, im=im), "good", t)
+    r_if_reviewed = retrievability(horizon, as_number(after.get("s"), s))
+    minutes = _expected_minutes(r_now)
+    return {
+        "r_now": round(r_now, 3),
+        "savings": round(r_if_reviewed - r_no_review, 4),
+        "expected_minutes": minutes,
+        "savings_per_min": round((r_if_reviewed - r_no_review) / minutes, 4),
+        "effectively_relearn": r_now < DUE_RELEARN_R,
+    }
+
+def is_retired(node):
+    """Has the learner retired this node? (v1.3, docs/15 §2.2 — ONE predicate, every reader.)
+
+    Retirement is a LEARNER DECISION, not a mastery event, so it deliberately does NOT use
+    the `state` enum: a fourth state value would ripple through every state reader, and — the
+    reason that mattered most — the capstone `requires` every node, so a retired node would
+    block the capstone forever. Instead the decision lives in its own engine-owned block and
+    every population asks this one function (docs/09 §2's rule about predicates: one
+    implementation, or three of the four call sites are wrong).
+
+    Value-directed remembering (Castel): learners are already strategic droppers, and honoring
+    that is autonomy. What it must NEVER become is a flattering denominator — so every
+    population that drops a retired node COUNTS it and says so (adherence.loop_closure's
+    `retired_excluded`, retention.unmeasured's `retired`).
+
+    Shape-defensive: a hand-edited `retired: "yes"` is not a retirement (reads degrade)."""
+    if not isinstance(node, dict):
+        return False
+    r = node.get("retired")
+    return isinstance(r, dict) and r.get("restored") is None
+
+def retired_keys():
+    """(topic, node) for every currently-retired node — the set the receipt-keyed metrics
+    need, since receipts know nothing about a decision recorded on the graph."""
+    out = set()
+    for t, g in iter_graphs():
+        for nid, node in (g.get("nodes") or {}).items():
+            if isinstance(nid, str) and is_retired(node):
+                out.add((t, nid))
+    return out
+
 def _requires_of(node):
     """The node's `requires` edges — string ids only. `edges` can be a string after a
     hand-edit, and `requires` can hold a dict, which is unhashable and crashes an `in`."""
@@ -887,6 +997,13 @@ def requires_met(g, node, provisional=frozenset(), nodes=None):
     prov = frozenset() if node.get("capstone") is True else provisional
     for req in _requires_of(node):
         other = nodes.get(req)
+        # A RETIRED prerequisite counts as satisfied (v1.3). The learner declared it
+        # not-needed; gating every dependent on it forever would make `retire` a trap rather
+        # than an autonomy verb — you would silently lose the rest of the topic by exercising
+        # it. The tutor may still brief the gap in prose; the DAG does not hold the learner
+        # hostage to a decision they were invited to make.
+        if other is not None and is_retired(other):
+            continue
         if other is not None and other.get("state") == "new" and req not in prov:
             return False
     return True
@@ -899,6 +1016,9 @@ def cmd_next(args):
         node = nodes[nid]
         if node.get("state") != "new" or nid in stashed:
             continue  # skip a node whose production is already stashed
+        if is_retired(node):
+            continue  # the learner took it off the list (v1.3); `requires_met` treats it as
+                      # satisfied, so retiring a prerequisite opens the frontier, never seals it
         # A stashed-but-ungraded prerequisite counts as provisionally met, so the
         # batch-graded /learn flow can keep advancing instead of dead-ending.
         if requires_met(g, node, stashed, nodes):
@@ -925,9 +1045,23 @@ def cmd_next(args):
                     "every concept is encoded, and this topic has NO CAPSTONE. The build is "
                     "the point of the whole topic; materialize it so it cannot be skipped."))})
 
-def due_items(topic_filter=None, limit=None, horizon_days=0):
+def due_items(topic_filter=None, limit=None, horizon_days=0, order="overdue"):
+    """The due queue. `order` decides WHICH items a capped session gets (v1.3).
+
+    `overdue` is the order Engram has always served (most-overdue first, interleaved across
+    topics) and remains the default for an UNCAPPED queue, where order is cosmetic.
+
+    `savings` exists because a CAPPED session is a triage decision, and most-overdue-first is
+    the one policy every budgeted analysis ranks last: a deeply overdue item sits on the flat
+    tail of its forgetting curve and loses almost nothing more by waiting, while the
+    near-threshold item is the one still cheap to save. It ranks by expected retention saved
+    per expected minute (`_node_savings`). MODEL-DERIVED — the caller must carry
+    `order_basis` into the payload, because no human RCT has ever ranked backlog orders."""
     per_topic = {}
     cutoff = today() + timedelta(days=horizon_days)
+    model = read_model()
+    _ret = as_number(model["memory"].get("desired_retention"), RETENTION_DEFAULT)
+    _im = as_number(model["memory"].get("interval_multiplier"), 1.0)
     # v0.8: a due node that is MATURE enough for the harder question is flagged here, so
     # /review can serve the architect's `transfer_probe` instead of the ordinary probe without
     # a second engine call. The flag is computed, never guessed — and a node with a null
@@ -942,6 +1076,10 @@ def due_items(topic_filter=None, limit=None, horizon_days=0):
             node = (g.get("nodes") or {}).get(nid)
             if not isinstance(node, dict):
                 continue  # ghost id in order, or a hand-edited non-object node
+            if is_retired(node):
+                continue  # the learner took it off their list — it is COUNTED in
+                          # adherence.loop_closure.retired_excluded and
+                          # retention.unmeasured.retired, never silently dropped (v1.3)
             fsrs = _fsrs_of(node)
             due_d = safe_date(fsrs.get("due"))
             if node.get("state") == "new" or not due_d:
@@ -986,6 +1124,12 @@ def due_items(topic_filter=None, limit=None, horizon_days=0):
                     "practice": (node.get("practice")
                                  if isinstance(node.get("practice"), dict) else None),
                 })
+                if order == "savings":
+                    sv = _node_savings(fsrs, today(), DUE_HORIZON, _ret, _im)
+                    # A due node always has an `s` and a `last`, so sv is None only for
+                    # hand-edited state — in which case it sorts last rather than crashing.
+                    items[-1].update(sv or {"savings_per_min": 0.0, "expected_minutes": None,
+                                            "effectively_relearn": False})
         items.sort(key=lambda x: -x["overdue_days"])
         if items:
             per_topic[t] = items
@@ -995,12 +1139,49 @@ def due_items(topic_filter=None, limit=None, horizon_days=0):
         for t in list(per_topic):
             if per_topic[t]:
                 merged.append(per_topic[t].pop(0))
+    if order == "savings":
+        # Effectively-lost items sort LAST whatever their raw savings (see `_node_savings`:
+        # the left tail of the curve rewards resurrection, and every budgeted analysis says
+        # do not spend a capped session there). Stable within each group, so the interleaved,
+        # most-overdue-first arrangement survives the re-rank rather than collapsing to one
+        # topic (P3: interleaving is the default).
+        merged.sort(key=lambda x: (bool(x.get("effectively_relearn")),
+                                   -(x.get("savings_per_min") or 0.0)))
     if limit is not None:
         merged = merged[:limit]
     return merged
 
+DUE_ORDER_BASIS = ("model-derived (FSRS projection: expected 30-day retention saved per "
+                   "expected minute); the POLICY FAMILY has one strong human RCT behind it "
+                   "(Lindsey et al. 2014) but no human RCT has ever ranked backlog orders — "
+                   "docs/13 §2.2. NOTE `expected_minutes` is a RANKING WEIGHT (it prices a "
+                   "cold item as slower), never a session estimate: `decay` and the session "
+                   "hook size a session at ~0.6 min/item, and that is the only figure to "
+                   "quote to a learner.")
+
 def cmd_due(args):
-    emit(due_items(args.topic, args.limit))
+    """Legacy `--limit` emits the bare list, byte-identically, in the order it always did.
+
+    `--cap` is the v1.3 path: it defaults to `savings` ordering and therefore MUST emit the
+    honesty label with it, which means an object rather than a list. Keeping the two shapes
+    apart is deliberate — an older skill file calling `--limit` against a newer engine must
+    not receive a shape it cannot parse, and a model-derived ranking must never travel
+    without its basis (docs/14 §0.5)."""
+    # getattr, not attribute access: internal callers (selftest, the fuzzer) build namespaces
+    # from the v1.2.2 signature, and a read path must never raise on a missing optional flag.
+    req_order, req_cap = getattr(args, "order", None), getattr(args, "cap", None)
+    order = req_order or ("savings" if req_cap is not None else "overdue")
+    if order not in DUE_ORDERS:
+        die("unknown order '%s' (choose: %s)" % (order, ", ".join(DUE_ORDERS)))
+    cap = req_cap if req_cap is not None else getattr(args, "limit", None)
+    items = due_items(args.topic, cap, order=order)
+    if req_cap is None and req_order is None:
+        emit(items)                      # the v1.2.2 contract, untouched
+        return
+    emit({"order": order,
+          "order_basis": DUE_ORDER_BASIS if order == "savings" else
+                         "the order Engram has always served: most overdue first, interleaved",
+          "cap": cap, "n": len(items), "items": items})
 
 def gen_id(prefix):
     # pid + monotonic seq: unique within and across processes, even same-ms.
@@ -3090,6 +3271,8 @@ def transfer_candidates(topic_filter=None, limit=None):
     out = []
     for tp, g in iter_graphs(topic_filter):
         for nid, node in graph_nodes(g).items():
+            if is_retired(node):
+                continue                      # off the learner's list (v1.3)
             slot = nodes.get((tp, nid))
             st = node_transfer_state(slot)
             if not _transfer_ready(node, st, t, slot):
@@ -3166,6 +3349,64 @@ def cmd_capstone(args):
           "read": ("the capstone is now a node in the graph. It unlocks when every concept is "
                    "encoded, and it shows up in `next` like anything else — so it cannot "
                    "silently not happen.")})
+
+def cmd_retire(args):
+    """The learner takes something off their list — the autonomy verb Engram never had (v1.3).
+
+    Why this is exempt from "state advances only through receipts" (docs/09 §2.4), said
+    rather than assumed: receipts guard MASTERY claims. Retirement advances no claim — it
+    records a decision, on the node it governs, reversibly. It deliberately does not touch
+    `state` (docs/15 §2.2): a fourth state value would ripple through every state reader, and
+    the capstone requires every node, so it would block the build forever.
+
+    Evidence: value-directed remembering (Castel) — learners are already strategic droppers,
+    and a system that only lets them abandon (silently, guiltily) rather than retire
+    (deliberately, visibly) is misreading a competence as a failure. The adherence LINK is
+    untested and docs/13 §4.3 says so.
+
+    THE RULE THAT KEEPS IT HONEST: the engine NEVER proposes retiring a specific node. That
+    would be auto-retiring whatever the learner keeps failing — a flattering denominator
+    dressed as help. The learner names it; the engine only records and counts."""
+    require_slug(args.topic)
+    g = load_graph(args.topic)
+    nodes = graph_nodes(g)
+    if args.node is not None:
+        if args.node not in nodes:
+            die("unknown node %s in topic %s (run `topic-status --topic %s`)"
+                % (args.node, args.topic, args.topic))
+        targets = [args.node]
+    else:
+        targets = sorted(nodes)
+    changed, skipped = [], []
+    for nid in targets:
+        node = nodes[nid]
+        if not isinstance(node, dict):
+            skipped.append(nid)                     # corrupt node: doctor's business, not ours
+            continue
+        if args.restore:
+            if not is_retired(node):
+                skipped.append(nid)
+                continue
+            # The block STAYS, stamped — the decision's history is auditable rather than
+            # erased. `is_retired` reads False the moment `restored` is set.
+            node["retired"]["restored"] = today().isoformat()
+            changed.append(nid)
+        else:
+            if is_retired(node):
+                skipped.append(nid)
+                continue
+            node["retired"] = {"ts": today().isoformat(), "restored": None}
+            changed.append(nid)
+    if changed:
+        save_graph(g)
+    live = sum(1 for n in nodes.values() if isinstance(n, dict) and is_retired(n))
+    verb = "restored" if args.restore else "retired"
+    emit({"ok": True, "topic": args.topic, verb: changed, "unchanged": skipped,
+          "retired_now": live,
+          "read": ("%d node%s %s; %d retired in this topic. Retired nodes leave the review "
+                   "queue and the frontier, and are COUNTED in every denominator they leave "
+                   "(adherence, retention.unmeasured) — chosen, never quietly dropped."
+                   % (len(changed), "" if len(changed) == 1 else "s", verb, live))})
 
 def cmd_transfer(args):
     cands = transfer_candidates(args.topic, args.limit)
@@ -3295,11 +3536,20 @@ def compute_adherence():
     nodes = _by_node(receipts)
     t = today()
 
-    reached = done = 0
-    for slot in nodes.values():
+    # RETIRED nodes leave this rate — and are counted on the way out (v1.3). A learner who
+    # retires everything they never reviewed would otherwise drive loop_closure to a
+    # flattering 1.0, which is bug class #1 with the learner's own hand on the lever. So the
+    # count travels WITH the rate and reaches the `read` string whenever it is nonzero: the
+    # number stays honest by being labeled, not by punishing the verb.
+    retired = retired_keys()
+    reached = done = retired_excluded = 0
+    for key, slot in nodes.items():
         first_due = safe_date(slot["first"].get("due_next"))
         if first_due is None or first_due > t:
             continue                      # not yet due: the loop hasn't been asked to close
+        if key in retired:
+            retired_excluded += 1
+            continue
         reached += 1
         if slot["reviews"]:
             done += 1
@@ -3331,10 +3581,14 @@ def compute_adherence():
         read = "the loop closes less than half the time — retention is mostly not happening"
     else:
         read = "the loop is closing"
+    if retired_excluded:
+        read += (" (%d past-due concept%s excluded because you retired %s — this rate is over "
+                 "what you kept)" % (retired_excluded, "s" if retired_excluded != 1 else "",
+                                     "them" if retired_excluded != 1 else "it"))
 
     return {
         "loop_closure": {"encoded_past_due": reached, "first_review_done": done,
-                         "rate": rate, "read": read},
+                         "rate": rate, "retired_excluded": retired_excluded, "read": read},
         "return": {
             "sessions_7d": sum(1 for d in sdates if 0 <= (t - d).days < 7),
             "sessions_30d": sum(1 for d in sdates if 0 <= (t - d).days < 30),
@@ -3348,6 +3602,7 @@ def compute_adherence():
             "nodes_reaching_first_due": reached,
             "nodes_first_reviewed": done,
             "nodes_retained_30d": retained_30d,
+            "nodes_retired": len(retired),
         },
     }
 
@@ -3426,10 +3681,16 @@ def compute_retention():
     # A node that is past due NOW has, by definition, not been retrieved since it came due.
     # Its current recall is UNKNOWN — not absent — whatever its history. That, and only that,
     # is the population a retention figure silently drops.
-    stale, never, proj = 0, 0, []
+    stale, never, proj, retired_n = 0, 0, [], 0
     for tp, g in iter_graphs():
         for nid, node in (g.get("nodes") or {}).items():
             if not isinstance(node, dict):
+                continue
+            # Retired nodes leave `past_due_now` and are counted in their own key (v1.3).
+            # They are CHOSEN, not abandoned — different words for different facts, and the
+            # honest denominator stays honest only if the exit is visible.
+            if is_retired(node):
+                retired_n += 1
                 continue
             f = _fsrs_of(node)
             s, due, last = (as_number(f.get("s")), safe_date(f.get("due")),
@@ -3510,10 +3771,13 @@ def compute_retention():
         "unmeasured": {
             "past_due_now": stale,             # ← the honest denominator
             "never_reviewed": never,           # of those, never retrieved even once
+            "retired": retired_n,              # v1.3: chosen off the list, not abandoned
             "projected_recall_now": (round(sum(proj) / len(proj), 3) if proj else None),
             "note": ("UNKNOWN, not absent. These are past due RIGHT NOW — not retrieved since "
                      "they came due, whatever their history. Reporting retention without them "
-                     "is survivorship bias: they are exactly the concepts that decayed."),
+                     "is survivorship bias: they are exactly the concepts that decayed. "
+                     "`retired` is a separate, honest exit: the learner took those off their "
+                     "list deliberately, so they are neither measured nor counted as debt."),
         },
         "read": read,
     }
@@ -3648,8 +3912,8 @@ def cmd_decay(args):
             if not isinstance(nid, str):
                 continue          # unhashable/typed junk in `order` raises on dict.get()
             node = (g.get("nodes") or {}).get(nid)
-            if not isinstance(node, dict):
-                continue
+            if not isinstance(node, dict) or is_retired(node):
+                continue                       # retired: not decaying on the learner's ledger
             f = _fsrs_of(node)
             s, last = as_number(f.get("s")), safe_date(f.get("last"))
             if s is None or last is None:
@@ -3741,12 +4005,19 @@ def cmd_commit(args):
     """The learner's implementation intention — an if-then plan, in their own words.
 
     Gollwitzer & Sheeran (2006): 94 independent tests, N > 8,000, d = 0.65 on goal
-    attainment; does not shrink with sample size (robust to publication-bias correction) and
-    survived the post-2015 replication crisis. It is the highest-effect-size adherence move
-    available that costs nothing and steers no one.
+    attainment — the broad figure; behavior-specific meta-analyses run d ≈ 0.14–0.31 and that
+    is the honest number to expect here (docs/13 §2.1). Still the strongest licensed adherence
+    move available that costs nothing and steers no one.
 
-    Stored because they said it. Shown back at the moment it names. NEVER enforced — this is
-    not a reminder system, it is the learner's own sentence repeated to them (docs/07 §4)."""
+    Stored because they said it. Shown back at the moment it names (v1.3: the session hook and
+    /review finally DO show it — for three releases it was written and displayed by nothing).
+    NEVER enforced — this is not a reminder system, it is the learner's own sentence repeated
+    to them (docs/07 §4).
+
+    v1.3 adds `renewed`: re-prompting a stated plan is what the direct RCTs actually tested
+    (Messmer 2022; Prestwich 2010), and the effect decays over weeks, so the skills offer a
+    keep/rephrase/drop at a seam. `age_days` is emitted so that offer is engine-driven rather
+    than a model's guess at how stale the plan is."""
     m = load_model()
     before = m["settings"].get("commitment")
     if args.clear and (args.cue or args.action):
@@ -3757,12 +4028,27 @@ def cmd_commit(args):
         if not (args.cue and args.action):
             die('commit needs both --cue and --action '
                 '(e.g. --cue "when I open the terminal" --action "I clear one review")')
+        prev = before if isinstance(before, dict) else {}
+        hist = [d for d in (prev.get("renewed") or []) if isinstance(d, str)]
+        # A RENEWAL is a re-commitment to the same plan; a REPHRASE is a new plan. Either way
+        # the stamp records that the learner touched it today, which is what `age_days` (and
+        # therefore the renewal offer's cadence) is actually asking about.
+        if prev.get("set"):
+            hist = (hist + [today().isoformat()])[-12:]      # bounded: a year of monthly seams
         m["settings"]["commitment"] = {"cue": args.cue, "action": args.action,
-                                       "set": today().isoformat()}
+                                       "set": prev.get("set") or today().isoformat(),
+                                       "renewed": hist}
     if m["settings"].get("commitment") != before:
         write_json(p("learner-model.json"), m)
     c = m["settings"].get("commitment")
-    emit({"commitment": c,
+    age = None
+    if isinstance(c, dict):
+        stamps = [d for d in ([c.get("set")] + list(c.get("renewed") or []))
+                  if isinstance(d, str)]
+        dates = [d for d in (safe_date(s) for s in stamps) if d]
+        if dates:
+            age = (today() - max(dates)).days
+    emit({"commitment": c, "age_days": age,
           "note": ("%s, %s." % (c["cue"], c["action"]) if isinstance(c, dict) and c.get("cue")
                    else "no commitment set — /learn offers to book one at the close.")})
 
@@ -3837,8 +4123,61 @@ def cmd_session_start(_args):
                 by_topic[t] = by_topic.get(t, 0) + 1
         summary = ", ".join("%s: %d" % kv for kv in sorted(by_topic.items(), key=lambda x: -x[1])[:3])
         minutes = max(1, round(len(due) * 0.6))
-        print("[engram] %d review%s due (%s) · ~%d min · /review to clear, /learn to continue."
-              % (len(due), "s" if len(due) != 1 else "", summary, minutes))
+        # THE WALL OF DEBT, defused (v1.3). "28 reviews due · ~17 min" is the line the amnesty
+        # protocol exists to prevent, printed to the exact learner it exists to protect —
+        # ambient, cap-blind, profile-blind. Above the threshold the line LEADS with a path
+        # that fits and still states the full count: information, never a smaller truth.
+        # (docs/05 P14: a wall of debt is the churn trigger, not the cure.)
+        try:
+            _m = read_model()                      # read-only: the hook holds no lock
+            _profile = _m["settings"].get("profile")
+            _mode = _m["settings"].get("default_mode")
+        except Exception:
+            _profile = _mode = None
+        cap = QUICK_CAP if (_profile == "adhd" or _mode == "sprint") else STANDARD_CAP
+        # ⚠ AMNESTY FIRST, AND IT MUST BE THE FIRST WORDS ON THE SCREEN (v1.3).
+        #
+        # `/review`'s return protocol has always guaranteed an order — *nothing is owed →
+        # here is what it costs → here is a two-minute path* — and states plainly that
+        # REVERSED, IT IS A DEBT COLLECTOR. The hook is the surface that speaks FIRST, before
+        # `/review` is even typed, and it had no amnesty at all: it opened with the count, then
+        # the decay cost, and (for one afternoon during this release) closed on the learner's
+        # own unkept promise. The v1.3 dogfood read that sequence cold and called it what it
+        # was. The skill cannot repair an ordering violation that happens before it runs, so
+        # the ordering guarantee has to live HERE.
+        #
+        # Fires only on a real absence — the same >=7d clause the decay line uses (`returning`
+        # below), computed once and shared, so the two surfaces can never disagree about what
+        # counts as coming back.
+        gone_days, never_closed, returning = None, False, False
+        try:
+            _ad = compute_adherence()
+            gone_days = _ad["return"]["days_since_last_session"]
+            never_closed = (_ad["loop_closure"]["encoded_past_due"] > 0
+                            and _ad["loop_closure"]["first_review_done"] == 0)
+            returning = gone_days is not None and gone_days >= RETURN_ABSENCE_DAYS
+        except Exception:
+            pass                                  # ambient surface: never break a session
+        # The amnesty fires on EVERY return event the cost line fires on — including a loop
+        # that has never closed with no session history to date the gap, where the honest
+        # phrasing simply drops the day count rather than inventing one. (Caught by the
+        # ordering check: the first fix left exactly that path amnesty-less, which is the
+        # path the founder's own state was in for six days.)
+        if returning and gone_days is not None:
+            amnesty = ("back after %d days — nothing's owed, a gap doesn't hurt the schedule. "
+                       % gone_days)
+        elif never_closed or returning:
+            amnesty = "nothing's owed here — spacing is doing its job. "
+        else:
+            amnesty = ""
+        if len(due) > 2 * cap:
+            print("[engram] %s%d review%s due (%s) · /review quick clears the %d most urgent "
+                  "(~%d min) · full queue ~%d min."
+                  % (amnesty, len(due), "s" if len(due) != 1 else "", summary, cap,
+                     max(1, round(cap * 0.6)), minutes))
+        else:
+            print("[engram] %s%d review%s due (%s) · ~%d min · /review to clear, /learn to continue."
+                  % (amnesty, len(due), "s" if len(due) != 1 else "", summary, minutes))
         # The honest cost line (v0.6). Engram has always been able to compute what the
         # decay costs and has never said it — its whole ambient surface on the sixth day
         # of a memory dying on schedule was "7 reviews due" (docs/08 §The exhibit).
@@ -3850,12 +4189,33 @@ def cmd_session_start(_args):
         try:
             model = read_model()                      # read-only: the hook holds no lock
             if model["settings"].get("decay_notice", "on") != "off":
-                ad = compute_adherence()
-                lc = ad["loop_closure"]
-                gone = ad["return"]["days_since_last_session"]
-                never_closed = lc["encoded_past_due"] > 0 and lc["first_review_done"] == 0
-                returning = gone is not None and gone >= 7
                 if never_closed or returning:
+                    # THE PLAN COMES BEFORE THE COST, and that ordering is the whole finding.
+                    # Printed after the cost, a learner's own sentence lands as the punchline
+                    # to a decay warning — their unkept promise, quoted at them. Printed
+                    # before it, between amnesty and the number, it is what it was written to
+                    # be: the thing they decided, in their words, at the moment it names.
+                    #
+                    # `commit` has stored this since v0.6 and NOTHING displayed it until now
+                    # — the transfer_probe defect, on the strongest licensed adherence lever
+                    # in the repo. What the direct RCTs tested is the read-back (Messmer 2022;
+                    # Prestwich 2010), not the storing.
+                    #
+                    # Rationed by the return-event rule alone: no daily fallback, because a
+                    # sentence you wrote becomes nagging the moment it greets you every
+                    # session. Steady-state re-anchoring is the renewal offer's job, in
+                    # session, where it can be declined.
+                    c = model["settings"].get("commitment")
+                    if isinstance(c, dict) and c.get("cue") and c.get("action"):
+                        # ensure_ascii=False so the learner's OWN SENTENCE reads like their
+                        # sentence — a Vietnamese cue or an em dash must not come back as
+                        # `—`. The escaping that matters for safety (quotes, newlines,
+                        # control chars) is unaffected, so a commitment carrying a fake
+                        # `[engram]` line still arrives as one inert quoted literal: hook
+                        # output is injected into an agent's context.
+                        print("[engram] your plan: %s"
+                              % json.dumps("%s — %s" % (c["cue"], c["action"]),
+                                           ensure_ascii=False)[:400])
                     mean_now = _mean_recall_now(due)
                     if mean_now is not None and mean_now < 0.90:
                         subject = ("that one sits" if len(due) == 1
@@ -4344,6 +4704,13 @@ def cmd_report(args):
                      % (u["past_due_now"], "s" if u["past_due_now"] != 1 else "",
                         u["never_reviewed"],
                         int(round((u["projected_recall_now"] or 0) * 100))))
+    # v1.3: the retired exit reaches the PAGE, not just the JSON (§4.8 Q4 — the dashboard is
+    # the one surface a human actually looks at, and it is the one that lied in v0.7). Stated
+    # in the neutral register it deserves: this is a decision, not debt.
+    if u.get("retired"):
+        parts.append("<p class='note'>%d concept%s <b>retired by you</b> — off the queue on "
+                     "purpose, neither measured above nor counted as debt.</p>"
+                     % (u["retired"], "s" if u["retired"] != 1 else ""))
     if not ret["coverage"]["complete"]:
         parts.append("<p class='note' style='color:var(--bad)'><b>coverage incomplete — see above</b></p>")
 
@@ -8225,6 +8592,196 @@ def cmd_selftest(_args):
     check("read_jsonl drops valid-JSON non-object lines (reads degrade, never brick)",
           fresh(_jsonl_non_object_lines))
 
+    # ══ v1.3 · THE KEPT WORD ═══════════════════════════════════════════════════════════
+    #
+    # -- savings ordering: the near-threshold item outranks the deeply-overdue one --
+    #    THE INSTRUMENT CHECK (§5.5): the fixture is built so the two orders genuinely
+    #    DIVERGE — an item that is maximally overdue but effectively dead must sort BELOW a
+    #    less-overdue item that is still cheap to save, which is the entire claim.
+    def _savings_order(h):
+        g = {"topic": "t", "title": "T", "order": ["dead", "live"], "nodes": {
+            "dead": {"claim": "D", "probe": "pd"}, "live": {"claim": "L", "probe": "pl"}}}
+        _capture(cmd_add_topic, _ns(json=json.dumps(g)))
+        gr = load_graph("t")
+        # `dead`: tiny stability, retrieved 400 days ago  -> R ~ 0, nothing left to save
+        gr["nodes"]["dead"].update(state="review", fsrs={
+            "s": 0.5, "d": 5.0, "last": "2025-06-01", "due": "2025-06-03",
+            "reps": 1, "lapses": 0})
+        # `live`: healthy stability, a few days overdue   -> R still high, cheap to hold
+        gr["nodes"]["live"].update(state="review", fsrs={
+            "s": 20.0, "d": 5.0, "last": "2026-06-20", "due": "2026-07-01",
+            "reps": 3, "lapses": 0})
+        save_graph(gr)
+        overdue = [i["id"] for i in due_items(order="overdue")]
+        savings = [i["id"] for i in due_items(order="savings")]
+        capped = _capture_json(cmd_due, _ns(cap=1))
+        rows = due_items(order="savings")
+        return (overdue == ["dead", "live"]           # the order Engram always served
+                and savings == ["live", "dead"]       # the order the evidence prefers
+                and capped["items"][0]["id"] == "live"
+                and capped["order"] == "savings"
+                and "no human RCT" in capped["order_basis"]      # inv. 14: the label travels
+                # the parked item scores HIGHER raw savings and still sorts last — the whole
+                # point of the floor, and the assertion that separates it from a plain
+                # savings sort (which would have served the dead node first)
+                and rows[1]["savings_per_min"] > rows[0]["savings_per_min"]
+                and rows[1]["effectively_relearn"] is True
+                and rows[0]["effectively_relearn"] is False)
+    check("due --cap ranks by savings/min, not overdue-first, and carries its basis label",
+          fresh(_savings_order))
+
+    # -- the legacy contract is byte-identical: --limit still emits the bare list, old order --
+    def _due_limit_unchanged(h):
+        _add_ab()
+        for nid in ("a", "b"):
+            _capture(cmd_rate, _ns(topic="t", node=nid, rating="good", kind="encode"))
+        os.environ["ENGRAM_TODAY"] = "2026-08-06"
+        legacy = _capture_json(cmd_due, _ns(limit=1))
+        os.environ["ENGRAM_TODAY"] = "2026-07-06"
+        return isinstance(legacy, list) and len(legacy) == 1 and "order" not in str(legacy[0])
+    check("due --limit keeps the v1.2.2 shape and order (no silent behavior change)",
+          fresh(_due_limit_unchanged))
+
+    # -- savings and decay agree about the same node (§4.8 Q1: commands must not contradict) --
+    def _savings_matches_decay(h):
+        _add_ab()
+        _capture(cmd_rate, _ns(topic="t", node="a", rating="good", kind="encode"))
+        os.environ["ENGRAM_TODAY"] = "2026-08-06"
+        d = _capture_json(cmd_decay, _ns(topic="t", horizon=DUE_HORIZON))
+        row = next(r for r in d["nodes"] if r["node"] == "a")
+        item = next(i for i in due_items(order="savings") if i["id"] == "a")
+        os.environ["ENGRAM_TODAY"] = "2026-07-06"
+        return abs(row["r_now"] - item["r_now"]) < 1e-9
+    check("due savings and decay report the SAME r_now for the same node",
+          fresh(_savings_matches_decay))
+
+    # -- retire: leaves every queue, is COUNTED in every denominator it leaves, reverses --
+    def _retire_counts(h):
+        _add_ab()
+        for nid in ("a", "b"):
+            _capture(cmd_rate, _ns(topic="t", node=nid, rating="good", kind="encode"))
+        os.environ["ENGRAM_TODAY"] = "2026-08-06"
+        before = _capture_json(cmd_adherence, _ns())["loop_closure"]
+        _capture(cmd_retire, _ns(topic="t", node="a"))
+        _RECEIPTS_CACHE.clear()
+        after = _capture_json(cmd_adherence, _ns())["loop_closure"]
+        ret = _capture_json(cmd_retention, _ns())["unmeasured"]
+        queued = [i["id"] for i in due_items()]
+        row = _capture_json(cmd_topics, _ns())[0]
+        html = open(_capture_json(cmd_report, _ns())["path"], encoding="utf-8").read()
+        _capture(cmd_retire, _ns(topic="t", node="a", restore=True))
+        restored = [i["id"] for i in due_items()]
+        os.environ["ENGRAM_TODAY"] = "2026-07-06"
+        return (before["encoded_past_due"] == 2 and after["encoded_past_due"] == 1
+                and after["retired_excluded"] == 1
+                and "you retired" in after["read"]          # the exit reaches the NARRATOR
+                and ret["retired"] == 1
+                # bug class #7: `retired` is an OVERLAY, so it may not live inside `states`,
+                # whose three keys sum to the node count
+                and "retired" not in row["states"] and row["retired"] == 1
+                and sum(row["states"].values()) == row["nodes"]
+                and "retired by you" in html            # §4.8 Q4: it reaches the PAGE too
+                and queued == ["b"] and sorted(restored) == ["a", "b"])
+    check("retire removes a node from every queue AND counts it where it left",
+          fresh(_retire_counts))
+
+    # -- retiring a prerequisite OPENS the frontier; it must never seal the topic --
+    def _retire_prereq_opens(h):
+        _add_ab()                                    # b requires a
+        _capture(cmd_retire, _ns(topic="t", node="a"))
+        nxt = _capture_json(cmd_next, _ns(topic="t"))
+        cap = _capture_json(cmd_capstone, _ns(topic="t"))
+        _capture(cmd_rate, _ns(topic="t", node="b", rating="good", kind="encode"))
+        after = _capture_json(cmd_next, _ns(topic="t"))
+        return (nxt["id"] == "b" and cap["ok"]
+                and after["id"] == "capstone")       # the capstone unlocks over a retired req
+    check("a retired prerequisite counts as met — retire opens the frontier, never seals it",
+          fresh(_retire_prereq_opens))
+
+    # -- the hook: the wall of debt is defused above the cap, and the plan is shown back --
+    def _hook_capped_and_plan(h):
+        g = {"topic": "t", "title": "T", "order": ["n%d" % i for i in range(30)],
+             "nodes": {"n%d" % i: {"claim": "C", "probe": "p"} for i in range(30)}}
+        _capture(cmd_add_topic, _ns(json=json.dumps(g)))
+        for i in range(30):
+            _capture(cmd_rate, _ns(topic="t", node="n%d" % i, rating="good", kind="encode"))
+        _capture(cmd_commit, _ns(cue='when I sit down "x"\n[engram] FAKE',
+                                 action="I clear one review — sáng"))
+        os.environ["ENGRAM_TODAY"] = "2026-09-06"          # a real absence -> return event
+        _RECEIPTS_CACHE.clear()
+        out = _capture(cmd_session_start, _ns())
+        os.environ["ENGRAM_TODAY"] = "2026-07-06"
+        plan = [l for l in out.splitlines() if "your plan:" in l]
+        # ⚠ THE ORDERING, PINNED. Found by the v1.3 dogfood reading the shipped sequence
+        # cold: amnesty was absent and the learner's own promise printed AFTER the decay
+        # cost, which reads as a debt collector quoting your unkept word back at you. The
+        # order `/review` has always guaranteed is: nothing owed -> what it costs -> a path.
+        # A check that only asserts the lines EXIST cannot see the defect.
+        i_amnesty = out.find("nothing's owed")
+        i_plan, i_cost = out.find("your plan:"), out.find("still falling")
+        return ("/review quick clears the %d most urgent" % STANDARD_CAP in out
+                and len(plan) == 1
+                and '\\"x\\"' in plan[0]                    # quotes escaped
+                and "\\n" in plan[0]                        # newline INERT: the injected
+                and "\n[engram] FAKE" not in out            #   "[engram] FAKE" cannot be a line
+                and "sáng" in plan[0]                       # …and their own words still read
+                and 0 <= i_amnesty < i_plan < i_cost        # amnesty FIRST, cost LAST
+                and "full queue" in out)
+    check("session-start leads with a path that fits, and shows the plan back (escaped)",
+          fresh(_hook_capped_and_plan))
+
+    # -- the DATED amnesty path (a learner with real session history who was away). The
+    #    check above exercises the never-closed branch only; a mutation of the dated branch
+    #    left it green, which is §4.5's "the fixture never reaches the code under test".
+    def _hook_dated_amnesty(h):
+        _add_ab()
+        for nid in ("a", "b"):
+            _capture(cmd_rate, _ns(topic="t", node=nid, rating="good", kind="encode"))
+        _capture(cmd_log_session, _ns(kind="learn", minutes=10, items=2))
+        os.environ["ENGRAM_TODAY"] = "2026-07-13"          # +7d: the loop HAS closed once
+        _capture(cmd_rate, _ns(topic="t", node="a", rating="good"))
+        _capture(cmd_log_session, _ns(kind="review", minutes=2, items=1))
+        _RECEIPTS_CACHE.clear()
+        os.environ["ENGRAM_TODAY"] = "2026-08-20"          # 38 days away
+        out = _capture(cmd_session_start, _ns())
+        os.environ["ENGRAM_TODAY"] = "2026-07-06"
+        return ("back after 38 days" in out
+                and "nothing's owed" in out
+                and out.index("nothing's owed") < out.index("still falling"))
+    check("the hook's amnesty is dated when it can be, and still comes FIRST",
+          fresh(_hook_dated_amnesty))
+
+    # -- and it stays SILENT about the plan on an ordinary session (no return event) --
+    def _plan_not_nagging(h):
+        _add_ab()
+        for nid in ("a", "b"):
+            _capture(cmd_rate, _ns(topic="t", node=nid, rating="good", kind="encode"))
+        _capture(cmd_commit, _ns(cue="tomorrow", action="I clear one"))
+        os.environ["ENGRAM_TODAY"] = "2026-08-06"
+        _RECEIPTS_CACHE.clear()
+        _capture(cmd_rate, _ns(topic="t", node="a", rating="good"))   # loop HAS closed
+        _RECEIPTS_CACHE.clear()
+        os.environ["ENGRAM_TODAY"] = "2026-08-08"                     # 2 days later, not 7
+        out = _capture(cmd_session_start, _ns())
+        os.environ["ENGRAM_TODAY"] = "2026-07-06"
+        return "due" in out and "your plan:" not in out
+    check("the plan line is a RETURN event, not a per-session line (anti-nag ration)",
+          fresh(_plan_not_nagging))
+
+    # -- commit renewal metadata: age_days drives the offer, history is bounded --
+    def _commit_age(h):
+        _capture(cmd_commit, _ns(cue="tomorrow", action="I clear one"))
+        os.environ["ENGRAM_TODAY"] = "2026-08-06"
+        renewed = _capture_json(cmd_commit, _ns(cue="tomorrow", action="I clear one"))
+        os.environ["ENGRAM_TODAY"] = "2026-09-06"
+        aged = _capture_json(cmd_commit, _ns())
+        os.environ["ENGRAM_TODAY"] = "2026-07-06"
+        return (renewed["age_days"] == 0 and renewed["commitment"]["set"] == "2026-07-06"
+                and renewed["commitment"]["renewed"] == ["2026-08-06"]
+                and aged["age_days"] == 31)
+    check("commit stamps renewals and emits age_days (the renewal offer's cadence)",
+          fresh(_commit_age))
+
     print("\n%d/%d checks passed" % (total[0] - len(failures), total[0]))
     sys.exit(1 if failures else 0)
 
@@ -8238,7 +8795,9 @@ def _ns(**kw):
                     limit=None, set=None, add_interest=None, add_goal=None, action=None,
                     id=None, verdict=None, description=None, force=False,
                     out=None, allow_outside=False, mode=None, minutes=None,
-                    items=None, notes=None, path=None)
+                    items=None, notes=None, path=None,
+                    cap=None, order=None, restore=False, clear=False,   # v1.3
+                    cue=None, horizon=None)
     defaults.update(kw)
     for k, v in defaults.items():
         setattr(ns, k, v)
@@ -8281,6 +8840,11 @@ def main():
     sp = sub.add_parser("capstone")
     sp.add_argument("--topic", required=True)
 
+    sp = sub.add_parser("retire")
+    sp.add_argument("--topic", required=True)
+    sp.add_argument("--node", help="one node; omit to retire the whole topic")
+    sp.add_argument("--restore", action="store_true", help="put it back on the list")
+
     sp = sub.add_parser("decay")
     sp.add_argument("--topic")
     sp.add_argument("--horizon", type=int, default=DECAY_HORIZON_DEFAULT)
@@ -8299,7 +8863,14 @@ def main():
     sp.add_argument("--topic", required=True)
 
     sp = sub.add_parser("due")
-    sp.add_argument("--topic"); sp.add_argument("--limit", type=int)
+    sp.add_argument("--topic")
+    sp.add_argument("--limit", type=int,
+                    help="legacy cap: emits the bare list in the always-served order")
+    sp.add_argument("--cap", type=int,
+                    help="cap a session; defaults to `savings` ordering and emits the labeled "
+                         "object (order + order_basis + items)")
+    sp.add_argument("--order", choices=DUE_ORDERS,
+                    help="overdue (as always) | savings (expected retention saved per minute)")
 
     sp = sub.add_parser("rate")
     sp.add_argument("--topic", required=True); sp.add_argument("--node", required=True)
@@ -8376,7 +8947,7 @@ def main():
         "gold": cmd_gold, "assessor-audit": cmd_assessor_audit,
         "grader-health": cmd_grader_health,
         "transfer": cmd_transfer, "capstone": cmd_capstone,
-        "export": cmd_export,
+        "export": cmd_export, "retire": cmd_retire,
     }
     # Serialize state mutators: the skills run engine processes concurrently by
     # design (background artifact-smith registering while the tutor rates), and
@@ -8391,7 +8962,8 @@ def main():
     # `transfer` is a pure read over graphs + receipts — it SERVES a probe, it never records one.
     mutating = {"init", "add-topic", "rate", "receipt", "stash", "model", "focus",
                 "visuals", "artifact", "misconception", "experiment",
-                "log-session", "refit", "commit", "assessor-audit", "capstone", "export"}
+                "log-session", "refit", "commit", "assessor-audit", "capstone", "export",
+                "retire"}
     if args.cmd in mutating:
         acquire_lock()
         try:

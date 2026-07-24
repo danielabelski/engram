@@ -3,10 +3,10 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-1.2.2-6D4AA8.svg" alt="Version 1.2.2">
+  <img src="https://img.shields.io/badge/version-1.3.0-6D4AA8.svg" alt="Version 1.3.0">
   <a href="https://www.npmjs.com/package/opencode-engram-learning"><img src="https://img.shields.io/npm/v/opencode-engram-learning?label=npm&color=6D4AA8" alt="npm package"></a>
   <img src="https://img.shields.io/badge/license-MIT-yellow.svg" alt="MIT License">
-  <img src="https://img.shields.io/badge/selftest-234%2F234-3E7D5A.svg" alt="234/234 checks">
+  <img src="https://img.shields.io/badge/selftest-243%2F243-3E7D5A.svg" alt="243/243 checks">
   <a href="gold/assessor-gold.jsonl"><img src="https://img.shields.io/badge/grader%20inflations-0%2F258-3E7D5A.svg" alt="0 of 258 blind judgments graded up, on the shipping spec"></a>
   <img src="https://img.shields.io/badge/scheduler-FSRS--4.5-6D4AA8.svg" alt="FSRS-4.5">
   <a href="CONTRIBUTING-DATA.md"><img src="https://img.shields.io/badge/data-100%25%20local-3E7D5A.svg" alt="100% local — the engine has no network code, proven by a permanent selftest"></a>
@@ -339,8 +339,10 @@ The model never does calendar math; this does:
 | **`adherence`** | **the binding constraint: of concepts taught and scheduled, how many you came back for** (`loop_closure`) · return cadence · the full funnel |
 | **`retention`** | **the north star: recall at 7 / 30 / 90 days after encoding** — reported with its `unmeasured` denominator (the concepts that came due and were never reviewed; unknown, not absent) |
 | **`decay --topic T`** | what is dying right now, and what N minutes would save — real FSRS numbers, both arms over the same window |
-| **`commit --cue … --action …`** | your if-then plan, in your words. Stored, shown back at the moment it names, **never enforced** |
+| **`commit --cue … --action …`** | your if-then plan, in your words. Stored, **shown back at the moment it names** (v1.3 — for three releases it was stored and displayed by nothing), renewable, **never enforced** |
 | `next --topic T` / `due` | next frontier concept · due review queue (interleaved) |
+| **`due --cap N`** | a capped session, ranked by **expected retention saved per minute** rather than most-overdue-first — with `order_basis` stating in the payload that it is model-derived (`--limit` keeps the old shape and order) |
+| **`retire --topic T [--node N]`** | take something off your list — out of every queue, **counted in every denominator it leaves**, reversible with `--restore` |
 | `rate` / `receipt --file F` | apply one rating · apply assessor receipt batch |
 | `stash add\|list\|count\|clear` | crash-safe queue of answers awaiting grading |
 | `model` / `misconception` | open learner model · error catalog |
@@ -357,7 +359,7 @@ The model never does calendar math; this does:
 | `refit` | fit review intervals to your measured recall (guarded, ≥50 reviews) |
 | **`export [--topic T]`** | a **text-stripped**, **attributed** receipt bundle written **to a file**. Whitelist-constructed — there is no code path by which a production could leave. **Refuses** if your grader is unaudited |
 | `session-start` / `log-session` | ambient nudge (hook) · session telemetry |
-| `selftest` | 234 checks| 230 checks| 217 checks| 214 checks| 213 checks| 213 checks| 207 checks| 201 checks| 200 checks| 192 checks| 191 checks over the FSRS math, state machine, adherence/retention arithmetic, the grader-audit statistics, and every hardened boundary |
+| `selftest` | 243 checks| 234 checks| 230 checks| 217 checks| 214 checks| 213 checks| 213 checks| 207 checks| 201 checks| 200 checks| 192 checks| 191 checks over the FSRS math, state machine, adherence/retention arithmetic, the grader-audit statistics, and every hardened boundary |
 
 </details>
 

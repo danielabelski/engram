@@ -132,8 +132,10 @@ in namespaces v1.2.2 never enumerates).
   it not-needed; gating dependents forever would punish the verb. The tutor may still
   brief the gap in prose. (Selftest: retire a mid-DAG prereq → its dependent becomes
   frontier-eligible.)
-- The **capstone requires every non-retired node** (`_capstone_node` filters). Retiring
-  any node un-blocks, never blocks. Restore re-tightens.
+- The **capstone requires every non-retired node** — enforced *dynamically* in
+  `requires_met`, not by filtering at mint time (amended at build: retirement usually
+  happens long after the capstone is minted, so a mint-time filter would have missed exactly
+  the case that matters). Retiring any node un-blocks, never blocks. Restore re-tightens.
 - `retire --topic T` (whole topic) stamps every node; topic listings show
   `retired: true` at topic level when all nodes carry the block.
 - Denominators (invariant: counted, labeled, never dropped): `adherence` gains
@@ -258,10 +260,23 @@ rule: counts below the floor, rates at or above it, `min_n` published beside eve
 
 ### 2.7 `due` payload — additions **[BINDING]**
 
+**Amended at build time (v1.3), and both amendments are corrections the code forced:**
+
+1. **`--limit` is NOT a synonym.** It keeps the v1.2.2 *shape* (a bare list) and the old
+   order, byte-identically; `--cap` is the new labeled path. Identical semantics would have
+   changed the payload shape under any older skill file that had not been updated yet —
+   a break the doctrine forbids for a benefit nobody needed.
+2. **The savings ranking needs a floor, because the raw metric ranks the hopeless first.**
+   Measured: savings/min is an inverted U peaking at R ≈ 0.34 (which reproduces the Lindsey
+   θ ≈ 0.33 policy — a real convergence), but reviewing a near-dead concept *resurrects* it,
+   so the left tail scores high. Items below `DUE_RELEARN_R` (0.10) are flagged
+   `effectively_relearn` and **sort last regardless of score**. docs/14 v1.3-C's prose claimed
+   the plain formula did this; it did not.
+
 ```jsonc
-// due --cap 8            (--limit = deprecated synonym; identical semantics)
+// due --cap 8            (--limit = legacy: bare list, old order, unchanged)
 // order default: uncapped → "overdue" (today's shipped order, named truthfully);
-//                capped   → "savings"
+//                capped   → "savings" (peak kept, hopeless tail parked)
 {
   "order": "savings",
   "order_basis": "model-derived (FSRS projection); no human RCT ranks backlog orders — docs/13 §2.2",

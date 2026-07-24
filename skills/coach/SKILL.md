@@ -37,7 +37,11 @@ Read `loop_closure` — *of the concepts Engram taught and scheduled, how many d
 - **`rate < 0.5`**: name it honestly, offer to shrink the load (Sprint default, `quick` reviews), and continue.
 - **`rate ≥ 0.5`**: one line, then move on to momentum.
 
+**And read `retired_excluded` before you quote the rate (v1.3).** Retired concepts leave this denominator — that is correct, they were taken off the list on purpose — but a learner who retires everything they never reviewed would drive `loop_closure` to a flattering 1.0. The engine already appends the disclosure to `read` when it is nonzero; **voice it, don't launder it**: *"0.8 — over what you kept; four past-due concepts are excluded because you retired them."*
+
 Never dress this number up and never soften it into a compliment. It is the one number that cannot be gamed, and its whole value is that it is allowed to say *no*.
+
+**The commitment renewal (v1.3), at the close, not the open.** Run `python3 "$ENGRAM" commit` (no flags — it reads). If a commitment exists and `age_days` ≥ 28, offer once, arrow-key: **keep it / rephrase it / drop it** — three equal options, drop unremarked and never re-raised. Re-prompting a stated plan is the move the direct RCTs actually tested (Messmer 2022; Prestwich 2010); the ~28-day cadence is an inference and is not defended as more than that. If they rephrase, store their new words verbatim (`commit --cue … --action …`). No commitment and no plan offered? That belongs to `/learn`'s close, not here.
 
 ## 0.5 · The oracle behind every number — say this BEFORE any retention figure (v0.7)
 
@@ -53,7 +57,9 @@ Every grade in this dashboard was written by the blind assessor. **Until v0.7 no
 >
 > Say the one thing that matters, offer the four-minute review, stop. The grader can be audited on a day when its verdict would actually change something. (Found by the §5.6 user session, run against the founder's own state — every test was green and the screen was still wrong.)
 
-- **`verdict: "unaudited"`** (`grader_unvalidated: true`) — the default for anyone who has not run an audit. One calm line, once: *"the grader that writes your receipts hasn't been checked against the gold set on this machine — `/coach audit` measures it in about four minutes."* Then carry on and report the numbers. **Do not withhold the dashboard over it and do not repeat the line every check-in** — it is information, not pressure (P13).
+- **`verdict: "unaudited"`** (`grader_unvalidated: true`) — the default for anyone who has not run an audit. One calm line, once: *"the grader that writes your receipts hasn't been checked against the gold set on this machine — `/coach audit` measures it."* Then carry on and report the numbers. **Do not withhold the dashboard over it and do not repeat the line every check-in** — it is information, not pressure (P13).
+
+  **Offer it exactly once, when it would actually change something (v1.3):** if `stats.receipts` ≥ 20 and `settings.audit_offered` is unset, make it an arrow-key choice — *run the audit now / later* — then record the offer (`model --set settings.audit_offered=<today>`) whichever they pick, and **never offer again**. Below 20 receipts, or once offered, it stays the one calm line. Declining costs nothing and is never mentioned.
 - **`verdict: "fail" | "incomplete" | "insufficient-runs"`** (`grader_unvalidated: true`) — say it **first, plainly, before any retention number**, and say what it means: *"the grader failed its own audit (QWK 0.42, floor is 0.60). Every recall number below was produced by it, so treat all of them as unearned until it's fixed."* Read `reasons` aloud; they are written for a human.
 - **`verdict: "pass" | "warn"`** — one line with the real numbers: *"grader checks out: QWK 0.93 against the gold set, and it has never once graded UP."* Then move on.
 
